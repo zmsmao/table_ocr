@@ -160,8 +160,8 @@ def rules(list_name,txt_name,table_engine,uuid,name,txt_result=[]):
         }
     }
     print('io/save_path/'+uuid)
-    ts = fiut.parent_path()+'/cache/'+str(name).split('.')[0]+"_result.txt"
-    fiut.write_result(json.dumps(dicts, ensure_ascii=False, indent=2),ts)
+    # ts = fiut.parent_path()+'/cache/'+str(name).split('.')[0]+"_result.txt"
+    # fiut.write_result(json.dumps(dicts, ensure_ascii=False, indent=2),ts)
     return dicts
 
 
