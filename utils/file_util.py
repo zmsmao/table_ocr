@@ -110,6 +110,12 @@ def uuid_cache_img(uuid):
     os.makedirs(os.path.dirname(root), exist_ok=True)
     return di
 
+def uuid_save_rotate_img(uuid):
+    root=uuid_save_root(uuid)+"/"
+    di=root+file_config.cv_rotate_img
+    os.makedirs(os.path.dirname(root), exist_ok=True)
+    return di
+
 def uuid_cache_split(uuid,name):
     root=uuid_cache_root(uuid)
     root=root+'/'+name

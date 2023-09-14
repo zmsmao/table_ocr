@@ -21,3 +21,5 @@ class FileConfig:
     split_write='write'
     #是否删除源图片和分隔图片
     is_delete_file=False
+    
+    cv_rotate_img='rotate_cv.jpg'

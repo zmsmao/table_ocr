@@ -1,8 +1,36 @@
 import cv2
 from config.cv_config import CVConfig
-from utils.file_util import uuid_save_mkdirs,uuid_cache_img,uuid_cache_split,uuid_cache_root,get_one_name,uuid_cache_spilt_path,uuid_cache_split_write
+from utils.file_util import uuid_save_mkdirs,uuid_save_rotate_img,uuid_cache_root,get_one_name,uuid_cache_spilt_path,uuid_cache_split_write
 import numpy as np
-import collections 
+import collections
+import math
+
+def analyze_data(data):
+    data_ = [x for x in data if x != 0]
+    data_not = [x for x in data if x == 0]
+    if  len(data_not)>len(data_)*2:
+        return 0.0
+    data = data_
+    # 区分正负两部分
+    positive = [x for x in data if x > 0]
+    negative = [x for x in data if x < 0]
+    # 选择数据量较多部分
+    if len(positive) > len(negative):
+        selected_data = positive
+    else:
+        selected_data = negative
+    selected_data = list(map(float, selected_data))
+        
+    # 计算统计量      
+    median = np.median(selected_data)
+    return median
+
+def rotate(image,angle,center=None,scale=1.0):
+    (w,h) = image.shape[0:2]
+    if center is None:
+        center = (w//2,h//2)   
+    wrapMat = cv2.getRotationMatrix2D(center,angle,scale)    
+    return cv2.warpAffine(image,wrapMat,(h,w))
 
 def is_inside(src, dst):
     src_x = [p[0] for p in src]
@@ -23,7 +51,7 @@ def rm_list(x_y_list,x_y_remove):
 
 #灰度化
 def cv_gray(root,name):
-    image = cv2.imread(root+"/"+name, 1)
+    image = cv2.imread(root+"/"+name)
     # 裁剪图片
     if CVConfig.cv_is_split:
         height, width, channels = image.shape
@@ -40,7 +68,7 @@ def cv_gray_path(path):
     image = cv2.imread(path, 1)
     #灰度图片
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    return gray
+    return gray,image
 
 #二值化
 def cv_adaptiveThreshold(gray):
@@ -218,6 +246,43 @@ def cv_core(merge):
     print({'x_y_list':x_y_list})
     return x_y_list
 
+
+def get_correct(root,name,save_path):
+    gray,image = cv_gray(root,name)
+    #腐蚀、膨胀
+    kernel = np.ones((5,5),np.uint8)
+    erode_Img = cv2.erode(gray,kernel)
+    eroDil = cv2.dilate(erode_Img,kernel)
+    # showAndWaitKey("eroDil",eroDil)
+    #边缘检测
+    canny = cv2.Canny(eroDil,50,150)
+    # showAndWaitKey("canny",canny)
+    #霍夫变换得到线条
+    lines = cv2.HoughLinesP(canny, 0.8, np.pi / 180, 90,minLineLength=100,maxLineGap=10)
+    #画出线条
+    ls=[]
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        if(x1!=x2):
+            k = float((y1-y2)/(x1-x2))
+            ls.append(k)
+    # 斜率
+    """
+    计算角度,因为x轴向右，y轴向下，所有计算的斜率是常规下斜率的相反数，我们就用这个斜率（旋转角度）进行旋转
+    """
+    median=analyze_data(ls)
+    if median!=0.0:
+        k = median
+        angle = np.degrees(math.atan(k))
+        print('旋转的角度为：'+str(angle))
+        """
+        旋转角度大于0，则逆时针旋转，否则顺时针旋转
+        """
+        rotateImg = rotate(image,angle)
+        cv2.imwrite(save_path,rotateImg)
+        return True
+    return False
+        
 def cv_end_save(x_y_list,image,coord,main):
     size_i=cv_spilt_save(x_y_list,image,coord)
     x, y, w, h = cv2.boundingRect(np.array(x_y_list[0][2]))
@@ -280,7 +345,7 @@ def cv_spilt_save(x_y_list,image,path):
     return size_i
 
 def cache_save_cv_gray(cache,path):
-    gray=cv_gray_path(path)
+    gray,image=cv_gray_path(path)
     cv2.imwrite(cache,gray)
     img=cv2.imread(cache,1)
     return img
@@ -289,11 +354,11 @@ def cache_save_cv_gray(cache,path):
 def cv_build(uuid,name):
     root,coord,main,other,txt_result=uuid_save_mkdirs(uuid)
     gray,image=cv_gray(root,name)
-    # 灰度化图片
-    cache=uuid_cache_img(uuid)
-    cv2.imwrite(cache,gray)
-    # 重新读取已灰度化的图片
-    img=cv2.imread(cache,1)
+    save_rotate=uuid_save_rotate_img(uuid)
+    #调整图片
+    flag = get_correct(root,name,save_rotate)
+    if flag:
+        gray,image=cv_gray_path(save_rotate)
     binary=cv_adaptiveThreshold(gray)
     dilatedcol,dilatedrow=cv_x_y(other,binary)
     merge=cv_table(other,dilatedcol,dilatedrow)
@@ -341,3 +406,5 @@ def cv_two_split_build(uuid,path,x_e=10,y_e=1):
                                     str(0)+"_"+str(height)+"_"+
                                     str(x_set[i])+"_"+str(x_set[i+1])+"_"+str(ed)+"_coordinate.jpg",roi)
     return split,wirte
+
+
