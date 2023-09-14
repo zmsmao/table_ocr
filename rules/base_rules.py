@@ -12,7 +12,8 @@ def rules(list_name,txt_name,table_engine,uuid,name,txt_result=[]):
         s_index=str(txt_name[i]).split("_")
         if s_index[0] == '0':
             ocr_result= option_res([list_name[i]],[txt_name[i]],table_engine)
-            if len(ocr_result.list_txt_filter_pj[0])>0 and len(ocr_result.list_txt_no_filter_pj[0])<=45:
+            print(len(ocr_result.list_txt_no_filter_pj[0]))
+            if len(ocr_result.list_txt_filter_pj[0])>0 and len(ocr_result.list_txt_no_filter_pj[0])<=100:
                 is_interrupt = False
                 break
     if is_interrupt:
@@ -160,8 +161,8 @@ def rules(list_name,txt_name,table_engine,uuid,name,txt_result=[]):
         }
     }
     print('io/save_path/'+uuid)
-    # ts = fiut.parent_path()+'/cache/'+str(name).split('.')[0]+"_result.txt"
-    # fiut.write_result(json.dumps(dicts, ensure_ascii=False, indent=2),ts)
+    ts = fiut.parent_path()+'/cache/'+str(name).split('.')[0]+"_result.txt"
+    fiut.write_result(json.dumps(dicts, ensure_ascii=False, indent=2),ts)
     return dicts
 
 
@@ -184,7 +185,7 @@ def two_spilt(result_paths,uuid,table_engine):
             # s_result=tmps_pj+'\n'+tmps_no_pj+'\n'
             # fiut.write_result(s_result,s_result_path)
         ts=obj.list_txt_filter_pj
-    if len(result_paths) >=3:
+    if len(result_paths) >=2:
         obj=option_res(list_name=result_paths,txt_name=[],table_engine=table_engine)
         ts=obj.list_txt_filter_pj
     return ts
