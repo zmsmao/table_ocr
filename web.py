@@ -1,4 +1,4 @@
-from flask import Flask,request
+from flask import Flask,request,render_template
 from config.web_config import WebConfig
 from config.file_config import FileConfig
 from service.base_service import common,res,all
@@ -21,6 +21,10 @@ app.logger.addHandler(getLogHandler())
 # 激活上下文
 ctx = app.app_context()
 ctx.push()
+
+@app.route('/index',methods=['GET'])
+def html():
+    return render_template('index.html')
 
 
 @app.route('/process/common', methods=['POST'])
