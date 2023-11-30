@@ -26,7 +26,7 @@ jobs:
         conda create --name table_ocr python=3.7.4 --channel https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/free/
     - name: change env
       run: |
-        conda activate table_ocr
+        source activate table_ocr
     - name: config env
       run: |
         conda install paddlepaddle==2.4.2 --channel https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/Paddle/
