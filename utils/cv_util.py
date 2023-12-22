@@ -1,9 +1,10 @@
 import cv2
 from config.cv_config import CVConfig
-from utils.file_util import uuid_save_mkdirs,uuid_save_rotate_img,uuid_cache_root,get_one_name,uuid_cache_spilt_path,uuid_cache_split_write
+import utils.file_util as fiul 
 import numpy as np
 import collections
 import math
+import os
 
 def analyze_data(data):
     data_ = [x for x in data if x != 0]
@@ -203,6 +204,8 @@ def cv_core(merge):
     x_y_list_rm=[]
     if len(x_y_list)>1:
         for j in range(len(x_y_list)):
+            if j==0 and counterls[0][2]>0 and counterls[1][2]==0:
+                continue
             x1=x_dict.get(x_y_list[j][1])
             xw=x_dict.get(x_y_list[j][3])
             y1=y_dict.get(x_y_list[j][4])
@@ -232,23 +235,23 @@ def cv_core(merge):
                     x_y_remove.append(j)
             x_y_list=rm_list(x_y_list,x_y_remove)
         
-        # 二次过滤：
-        if len(x_y_list)>1:
-            x_y_remove=[]
-            for j in range(len(x_y_list)):
-                x1=x_dict.get(x_y_list[j][1])
-                xw=x_dict.get(x_y_list[j][3])
-                y1=y_dict.get(x_y_list[j][4])
-                yh=y_dict.get(x_y_list[j][5])
-                if (x1==1 or xw==1) and (y1==1 or yh ==1):
-                    x_y_remove.append(j)
-            x_y_list=rm_list(x_y_list,x_y_remove)
+        # # 二次过滤：
+        # if len(x_y_list)>1:
+        #     x_y_remove=[]
+        #     for j in range(len(x_y_list)):
+        #         x1=x_dict.get(x_y_list[j][1])
+        #         xw=x_dict.get(x_y_list[j][3])
+        #         y1=y_dict.get(x_y_list[j][4])
+        #         yh=y_dict.get(x_y_list[j][5])
+        #         if (x1==1 or xw==1) and (y1==1 or yh ==1):
+        #             x_y_remove.append(j)
+        #     x_y_list=rm_list(x_y_list,x_y_remove)
     print({'x_y_list':x_y_list})
     return x_y_list
 
 
-def get_correct(root,name,save_path):
-    gray,image = cv_gray(root,name)
+def get_correct(path,save_path):
+    gray,image = cv_gray_path(path)
     #腐蚀、膨胀
     kernel = np.ones((5,5),np.uint8)
     erode_Img = cv2.erode(gray,kernel)
@@ -284,7 +287,7 @@ def get_correct(root,name,save_path):
     return False
         
 def cv_end_save(x_y_list,image,coord,main):
-    size_i=cv_spilt_save(x_y_list,image,coord)
+    cv_spilt_save(x_y_list,image,coord)
     x, y, w, h = cv2.boundingRect(np.array(x_y_list[0][2]))
     roi = image[y:y+h, x:x+w]
     cv2.imwrite(main+'/'+"_"+
@@ -318,7 +321,6 @@ def cv_end_save(x_y_list,image,coord,main):
 
 
 def cv_spilt_save(x_y_list,image,path):
-    size_i=[]
     if len(x_y_list)==0:
         print()
     elif len(x_y_list)==1:
@@ -341,8 +343,6 @@ def cv_spilt_save(x_y_list,image,path):
                 cv2.imwrite(path+'/'+
                                 str(yt)+"_"+str(yht)+"_"+
                                 str(xt)+"_"+str(xwt)+"_"+str(i)+"_coordinate.jpg",roi)
-                size_i.append(i)
-    return size_i
 
 def cache_save_cv_gray(cache,path):
     gray,image=cv_gray_path(path)
@@ -352,26 +352,31 @@ def cache_save_cv_gray(cache,path):
         
 
 def cv_build(uuid,name):
-    root,coord,main,other,txt_result=uuid_save_mkdirs(uuid)
-    gray,image=cv_gray(root,name)
-    save_rotate=uuid_save_rotate_img(uuid)
+    root,coord,main,other,txt_result=fiul.uuid_save_mkdirs(uuid)
+    save_rotate=fiul.uuid_save_rotate_img(uuid)
+    target_path = root+"/"+name
+    #初始化
+    target_path = cv_init_img(target_path,uuid)
     #调整图片
-    flag = get_correct(root,name,save_rotate)
-    if flag:
-        gray,image=cv_gray_path(save_rotate)
+    flag_rotate = get_correct(target_path,save_rotate)
+    if flag_rotate:
+        target_path = save_rotate
+    gray,image = cv_gray_path(target_path)
     binary=cv_adaptiveThreshold(gray)
     dilatedcol,dilatedrow=cv_x_y(other,binary)
     merge=cv_table(other,dilatedcol,dilatedrow)
     x_y_list=cv_core(merge)
+    # #情空表格线
+    # image = clear_border_lines(image,contours,save_line)
     cv_end_save(x_y_list,image,coord,main)
     return coord,txt_result
 
 
 def cv_two_split_build(uuid,path,x_e=10,y_e=1):
-    pp=uuid_cache_root(uuid)
-    img_name=get_one_name(path)
-    split=uuid_cache_spilt_path(uuid,img_name)
-    wirte = uuid_cache_split_write(uuid,img_name)
+    pp=fiul.uuid_cache_root(uuid)
+    img_name=fiul.get_one_name(path)
+    split=fiul.uuid_cache_spilt_path(uuid,img_name)
+    wirte =fiul. uuid_cache_split_write(uuid,img_name)
     image=cv2.imread(path,1)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     binary=cv_adaptiveThreshold(gray)
@@ -408,3 +413,251 @@ def cv_two_split_build(uuid,path,x_e=10,y_e=1):
     return split,wirte
 
 
+def get_transform(input_path, output_path):
+    # 读取原始图片
+    gray,image=cv_gray_path(input_path)
+    gray = cv_adaptiveThreshold(gray)
+    #高斯模糊
+    # gray = cv2.GaussianBlur(gray, (5, 5), 0)
+    # 执行轮廓检测
+    contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # 筛选最大的封闭边框
+    max_contour = max(contours, key=cv2.contourArea)
+    # cv2.drawContours(src, [max_contour], -1, (0, 255, 0), thickness=2)
+    # 获取轮廓的外接矩形
+    x, y, w, h = cv2.boundingRect(max_contour)
+    # 提取四个角点
+    top_left = (x, y)
+    bottom_left = (w+x,y)
+    top_right = (x, h+y)
+    bottom_right = (x+w, h + y)
+    box = np.int0([top_left,top_right,bottom_left,bottom_right])
+    # 寻找最小面积矩形
+    # rect = cv2.minAreaRect(max_contour)
+    # box = np.int0(cv2.boxPoints(rect))
+    # cv2.drawContours(src, [box], -1, (255, 255, 0), thickness=2)
+    # 获取轮廓的坐标点
+    # 近似轮廓为四边形
+    epsilon = 0.02 * cv2.arcLength(max_contour, True)
+    approx = cv2.approxPolyDP(max_contour, epsilon, True)
+    #多次近似
+    approx = mush_approx(approx)
+    # 获取轮廓的四个端点坐标
+    points = approx.squeeze().tolist()
+    # 定义排序规则函数
+    def contour_sort_rule(point):
+        x, y = point
+        # 根据越上越左、越上越右、越下越左、越下越右的顺序进行排序
+        if x <= image.shape[0] // 2 and y <= image.shape[1] // 2:
+            return 1  # 越左越上
+        elif x > image.shape[0] // 2 and y <= image.shape[1] // 2:
+            return 2  # 越右越上
+        elif x <= image.shape[0] // 2 and y > image.shape[1] // 2:
+            return 3  # 越左越下
+        else:
+            return 4  # 越右越下
+    #无法近似四边形则停止变换，直接返回
+    if len(points)>4:
+        return False
+    # 根据排序规则对坐标点进行排序
+    sorted_points = sorted(points, key=contour_sort_rule)
+    sorted_box = sorted(box, key=contour_sort_rule)
+    # 打印排序后的坐标点
+    print("透视变换----")
+    x_set,y_set = get_x_y_set(sorted_points)
+    if len(set(x_set))==2 and len(set(y_set))==2:
+        return False
+    
+    # 组合角点
+    res = np.float32([sorted_points[0], sorted_points[1], sorted_points[2], sorted_points[3]])
+    img_size = (image.shape[1],image.shape[0])
+    dst = np.float32([sorted_box[0],sorted_box[1],sorted_box[2],sorted_box[3]])
+    # dst = np.float32([[0, 0], [5000 ,0], [0, 5000], [5000, 5000]])
+    # 获取透视变换矩阵，进行转换
+    M = cv2.getPerspectiveTransform(res, dst)
+    src = cv2.warpPerspective(image, M,img_size)
+    
+    if check_trf_success(src):
+        cv2.imwrite(output_path,src)
+        return True
+    return False
+
+def get_compress(input_path, output_path,target_max_size):
+    # 读取原始图片
+    image = cv2.imread(input_path)
+
+    # 获取原始图片的宽度和高度
+    width = image.shape[1]
+    height = image.shape[0]
+    
+    original_size = os.path.getsize(input_path)
+
+    # 如果原始图片已经小于等于目标大小，则直接保存原始图片
+    if original_size < target_max_size:
+        return False
+    
+    # 计算原始图片的大小
+    original_size = width * height
+    # 计算压缩比例
+    compression_ratio = (target_max_size*1.75 / original_size) ** 0.5
+    
+    if compression_ratio>=1:
+        return False
+
+    # 计算压缩后的宽度和高度
+    compressed_width = int(width * compression_ratio)
+    compressed_height = int(height * compression_ratio)
+
+    # 使用二三插值法进行压缩
+    compressed_image = cv2.resize(image, (compressed_width, compressed_height), interpolation=cv2.INTER_CUBIC)
+
+    # 保存压缩后的图片
+    cv2.imwrite(output_path, compressed_image)
+    
+    return True
+
+def expand_cv_img(src_path):
+    '''
+    扩展像素,ocr提高识别度
+    '''
+    file_dir =os.path.dirname(src_path)
+    filename = os.path.basename(src_path)
+    s=filename.split('.')[0]
+    fx = filename.split('.')[1]
+    # # 读取原始图像
+    # img = cv2.imread(src_path)
+    # # 获取原始图像的宽度和高度
+    # original_height, original_width = img.shape[:2]
+    # # 扩展后的边框大小
+    # border_size = 10
+    # # 计算扩展后的宽度和高度
+    # expanded_width = original_width + 2 * border_size
+    # expanded_height = original_height + 2 * border_size
+    # # 创建扩展后的图像
+    # expanded_img = cv2.resize(img, (expanded_width, expanded_height))
+    
+    # # 读取原始图像
+    # expansion_factor = 1.21
+    # original_image = cv2.imread(src_path)
+
+    # # 获取原始图像的宽度和高度
+    # original_height, original_width = original_image.shape[:2]
+
+    # # 计算扩展后的图像的目标宽度和高度
+    # target_width = int(original_width * expansion_factor)
+    # target_height = int(original_height * expansion_factor)
+
+    # # 计算水平和垂直的填充量
+    # horizontal_padding = int((target_width - original_width) / 2)
+    # vertical_padding = int((target_height - original_height) / 2)
+
+    # 创建一个新的扩展后大小的空白图像
+    # expanded_img = cv2.copyMakeBorder(original_image, vertical_padding, vertical_padding,
+    #                                     horizontal_padding, horizontal_padding, cv2.BORDER_CONSTANT,value=[255,255,255])
+    img = cv2.imread(src_path)
+    # height, width, channels = img.shape
+    # img=img[1:height-1,1:width-1]
+    top = 6  # 顶部边框大小
+    bottom = 14  # 底部边框大小
+    left = 10 # 左侧边框大小
+    right = 10  # 右侧边框大小
+    # 使用cv2.copyMakeBorder()函数扩展图像
+    expanded_img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=[255, 255, 255])
+    
+    tmp = file_dir+"\_tmp."+fx
+    cv2.imwrite(tmp,expanded_img)
+    return tmp
+
+def check_trf_success(gray):
+    #再次检测
+    #执行轮廓检测
+    gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)
+    gray = cv_adaptiveThreshold(gray)
+    # try:
+    contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # except:
+    #     return False
+    # 筛选最大的封闭边框
+    max_contour = max(contours, key=cv2.contourArea)
+    epsilon = 0.02 * cv2.arcLength(max_contour, True)
+    approx = cv2.approxPolyDP(max_contour, epsilon, True)
+    #多次近似
+    approx = mush_approx(approx)
+    # 获取轮廓的四个端点坐标
+    points = approx.squeeze().tolist()
+    #无法近似四边形则停止变换，直接返回
+    if len(points)>4:
+        return False
+    print("透视变换check----")
+    x_set,y_set = get_x_y_set(points)
+    if len(set(x_set))!=2 and len(set(y_set))!=2:
+        return False
+    return True
+
+def mush_approx(approx):
+    #多次近似
+    if len(approx) > 4:
+    # 寻找最小面积的四边形
+        hull = cv2.convexHull(approx)
+        if len(hull) == 4:
+            approx = hull
+        else:
+            hull = cv2.convexHull(hull)
+            approx = hull
+    if len(approx) >4:
+        hull = cv2.convexHull(approx)
+        if len(hull) == 4:
+            approx = hull
+        else:
+            hull = cv2.convexHull(hull)
+            approx = hull
+    return approx
+            
+def get_x_y_set(points):
+    x_set=[]
+    y_set=[]
+    for point in points:
+        x, y = point
+        print(f"Point: ({x}, {y})")
+        temp_index=0
+        y1=y
+        for index in range(len(y_set)):
+            if abs(y1-y_set[index])<=CVConfig.pixel_fault_tolerance:
+                temp_index=index
+                y1=y_set[index]
+        if temp_index==0 :
+            y_set.append(y1)
+        temp_index=0
+        x1=x
+        for index in range(len(x_set)):
+            if abs(x1-x_set[index])<=CVConfig.pixel_fault_tolerance:
+                temp_index=index
+                x1=x_set[index]
+        if temp_index==0 :
+            x_set.append(x1)
+    return x_set,y_set
+
+def clear_border_lines(image,contours,save_line):
+    for i in contours:
+        cv2.drawContours(image, [i], 0, (255, 255, 255), 2)
+    cv2.imwrite(save_line,image)
+    gray,image = cv_gray_path(save_line)
+    return image
+
+def cv_init_img(src_path,uuid):
+    '''
+    初始化优化图片，使用压缩和透视变换
+    '''
+    save_compress=fiul.uuid_save_compress_img(uuid)
+    save_transform = fiul.uuid_save_transform_img(uuid)
+    target = src_path
+    #压缩图片
+    flag_compress = get_compress(target,save_compress,CVConfig.cv_compress)
+    if flag_compress:
+        target = save_compress
+    #透视转化
+    flag_transform=get_transform(target,save_transform)
+    if flag_transform:
+        target = save_transform
+    return target
+    

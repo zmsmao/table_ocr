@@ -41,29 +41,42 @@ def dir_delete(dir):
         shutil.rmtree(dir)
         print(dir,"删除成功")
 
-def listdir(path, list_name):  # 传入存储的list
+def listdir(path, coord_img_path):  # 传入存储的list
     for file in os.listdir(path):
         file_path = os.path.join(path, file)
         if os.path.isdir(file_path):
-            listdir(file_path, list_name)
+            listdir(file_path, coord_img_path)
         else:
-            list_name.append(file_path)
+            coord_img_path.append(file_path)
             
-def list_one_dir(path, list_name):  # 传入存储的list
+def list_one_dir(path, coord_img_path):  # 传入存储的list
     for file in os.listdir(path):
         file_path = os.path.join(path, file)
         if os.path.isdir(file_path):
             continue
         else:
-            list_name.append(file_path)
+            coord_img_path.append(file_path)
             
-def get_file_name(list_name):
-    txt_names=[]
-    for name in list_name:
+def get_file_name(coord_img_path):
+    img_name=[]
+    for name in coord_img_path:
         filename = os.path.basename(name)
         s=filename.split('.')[0]
-        txt_names.append(s)
-    return txt_names
+        img_name.append(s)
+    return img_name
+
+def sort_file_path(coord_img_path):
+    res = []
+    for i in coord_img_path:
+        filename = os.path.basename(i)
+        s=filename.split('.')[0].split('_')[0]
+        res.append((int(s),i))
+    tmp=[]
+    res = sorted(res,key=lambda x:x[0])
+    for i in  res:
+        tmp.append(i[1])
+    return tmp
+    
 
 def uuid_save_mkdirs(path,uuid):
     root=path+"/"+file_config.save_path+"/"+uuid
@@ -97,6 +110,7 @@ def uuid_save_img(uuid,name):
 def uuid_save_root(uuid):
     path=parent_path()
     root=path+"/"+file_config.save_path+"/"+uuid
+    os.makedirs(root, exist_ok=True)
     return root
 
 def uuid_cache_root(uuid):
@@ -107,12 +121,6 @@ def uuid_cache_root(uuid):
 def uuid_cache_img(uuid):
     root=uuid_cache_root(uuid)+"/"
     di=root+file_config.cv_img
-    os.makedirs(os.path.dirname(root), exist_ok=True)
-    return di
-
-def uuid_save_rotate_img(uuid):
-    root=uuid_save_root(uuid)+"/"
-    di=root+file_config.cv_rotate_img
     os.makedirs(os.path.dirname(root), exist_ok=True)
     return di
 
@@ -139,6 +147,32 @@ def uuid_cache_split_write(uuid,name):
     root=root+'/'+file_config.split_write
     os.makedirs(root,exist_ok=True)
     return root
+
+def uuid_save_rotate_img(uuid):
+    root=uuid_save_root(uuid)+"/"
+    di=root+file_config.cv_rotate_img
+    os.makedirs(os.path.dirname(root), exist_ok=True)
+    return di
+
+def uuid_save_compress_img(uuid):
+    root=uuid_save_root(uuid)+"/"
+    di=root+file_config.cv_compress_img
+    os.makedirs(os.path.dirname(root), exist_ok=True)
+    return di
+
+def uuid_save_transform_img(uuid):
+    root=uuid_save_root(uuid)+"/"
+    di=root+file_config.cv_transform_img
+    os.makedirs(os.path.dirname(root), exist_ok=True)
+    return di
+
+
+def uuid_save_line_img(uuid):
+    root=uuid_save_root(uuid)+"/"
+    di=root+file_config.cv_border_lines_img
+    os.makedirs(os.path.dirname(root), exist_ok=True)
+    return di
+
 
 def write_result(result_text,output_path):
     with open(output_path, 'w', encoding='utf-8') as f:

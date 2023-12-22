@@ -11,8 +11,6 @@ class CVConfig:
     
     cv_point='/cv_point.jpg'
     
-    ps='/'
-    
     cv_x_right_split=100
     
     cv_x_left_split=100
@@ -22,3 +20,5 @@ class CVConfig:
     cv_y_end_split= 200
     
     cv_is_split = False
+    #图片压缩比例
+    cv_compress = 1.45*1024*1024
