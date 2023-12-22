@@ -23,3 +23,11 @@ class FileConfig:
     is_delete_file=False
     
     cv_rotate_img='rotate_cv.jpg'
+    
+    cv_compress_img = 'compress_cv.jpg'
+    
+    cv_transform_img = 'transform_cv.jpg'
+    
+    cv_intelligence_img = 'intelligence_cv.jpg'
+    
+    cv_border_lines_img = 'lines_cv.jpg'

@@ -49,3 +49,26 @@ class OCRRulesResult:
                 self.list_txt_no_filter_pj=list_txt_no_filter_pj
                 self.list_filter=list_filter
                 self.list_no_filter=list_no_filter
+                
+                
+                
+class OCRBuildResult:
+        def __init__(self, name=None,uuid=None,table_head=None,table_type=None
+        ,ocr_head=None,ocr_body=None):
+                self.name = name
+                self.uuid = uuid
+                self.table_head = table_head
+                self.table_type=table_type
+                self.ocr_head=ocr_head
+                self.ocr_body=ocr_body
+        def __dict__(self):
+                return {
+                        'img_name':str(self.name),
+                        'uuid_path':'io/save_path/'+self.uuid,
+                        'table_head':self.table_head,
+                        'table_type':self.table_type,
+                        'table_body':{
+                        'head':self.ocr_head.__dict__(),
+                        'body':self.ocr_body.__dict__()
+                        }
+                }

@@ -52,6 +52,9 @@ def extract_text_coordinates(data):
     return result
 
 def extract_text_obj(data):
+    '''
+    提取识别结果
+    '''
     result = []
     data=data[0]
     for item in data:
