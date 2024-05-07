@@ -103,12 +103,18 @@ def cv_table(other,dilatedcol,dilatedrow):
     merge = cv2.add(dilatedcol,dilatedrow)
     # cv2.imshow("表格整体展示：",merge)
     # cv2.waitKey(0)
-    cv2.imwrite(other+CVConfig.cv_table,merge)
-    
-    return merge
+    table_path = other+CVConfig.cv_table
+    cv2.imwrite(table_path,merge)
+    return merge,table_path
 
-def cv_core(merge):
+def cv_core(merge,table_path):
     # 对二值化图像进行轮廓检测，得到每一个表格的轮廓
+    kernel = np.ones((2,2),np.uint8)
+    merge = cv2.dilate(merge,kernel,iterations=1)
+    # merge = cv2.GaussianBlur(merge, (1,1), 0)
+    # cv2.imshow("ks",merge)
+    # cv2.waitKey()
+    # cv_draw_max_rect(table_path)
     contours, _ = cv2.findContours(merge, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     # 得到原始过滤坐标
     list_result=[]
@@ -288,7 +294,13 @@ def get_correct(path,save_path):
         
 def cv_end_save(x_y_list,image,coord,main):
     cv_spilt_save(x_y_list,image,coord)
+    x_y_list=sorted(x_y_list,key=lambda x:x[2][0][1])
     x, y, w, h = cv2.boundingRect(np.array(x_y_list[0][2]))
+    if y<=20:
+        for i in range(1,len(x_y_list)):
+            x, y, w, h = cv2.boundingRect(np.array(x_y_list[i][2]))
+            if y>=20:
+                break
     roi = image[y:y+h, x:x+w]
     cv2.imwrite(main+'/'+"_"+
                     str(y)+"_"+str(y+h)+"_"+
@@ -311,13 +323,13 @@ def cv_end_save(x_y_list,image,coord,main):
             cv2.imwrite(coord+'/'+
                             str(0)+"_"+str(y)+"_"+
                             str(x)+"_"+str(x+w)+"_"+str(i)+"_head.jpg",roiH)
-    if (height-y-h)>0:
-        roiE=image[y+h:height,0:width]
-        i=(height-y-h)*width
-        if i>CVConfig.min_size/2:
-            cv2.imwrite(coord+'/'+
-                            str(y+h)+"_"+str(height)+"_"+
-                            str(x)+"_"+str(x+w)+"_"+str(i)+"_end.jpg",roiE)
+    # if (height-y-h)>0:
+    #     roiE=image[y+h:height,0:width]
+    #     i=(height-y-h)*width
+    #     if i>CVConfig.min_size/2:
+    #         cv2.imwrite(coord+'/'+
+    #                         str(y+h)+"_"+str(height)+"_"+
+    #                         str(x)+"_"+str(x+w)+"_"+str(i)+"_end.jpg",roiE)
 
 
 def cv_spilt_save(x_y_list,image,path):
@@ -356,18 +368,24 @@ def cv_build(uuid,name):
     save_rotate=fiul.uuid_save_rotate_img(uuid)
     target_path = root+"/"+name
     #初始化
+    # cv_draw_max_rect(target_path)
     target_path = cv_init_img(target_path,uuid)
     #调整图片
     flag_rotate = get_correct(target_path,save_rotate)
     if flag_rotate:
         target_path = save_rotate
+    #获取灰度图片
     gray,image = cv_gray_path(target_path)
     binary=cv_adaptiveThreshold(gray)
+    #获取轮廓线
     dilatedcol,dilatedrow=cv_x_y(other,binary)
-    merge=cv_table(other,dilatedcol,dilatedrow)
-    x_y_list=cv_core(merge)
-    # #情空表格线
+    #绘制表格
+    merge,table_path=cv_table(other,dilatedcol,dilatedrow)
+    #分隔表格和根据容错率优化， 得到每一个表格的轮廓
+    x_y_list=cv_core(merge,table_path)
+    # #清空表格线
     # image = clear_border_lines(image,contours,save_line)
+    #分隔图片
     cv_end_save(x_y_list,image,coord,main)
     return coord,txt_result
 
@@ -481,6 +499,7 @@ def get_transform(input_path, output_path):
         cv2.imwrite(output_path,src)
         return True
     return False
+
 
 def get_compress(input_path, output_path,target_max_size):
     # 读取原始图片
@@ -644,7 +663,38 @@ def clear_border_lines(image,contours,save_line):
     gray,image = cv_gray_path(save_line)
     return image
 
-def cv_init_img(src_path,uuid):
+
+def cv_draw_max_rect(src_path):
+    gray,image = cv_gray_path(src_path)
+    binary=cv_adaptiveThreshold(gray)
+    contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    max_contour = max(contours, key=cv2.contourArea)
+    rect = cv2.minAreaRect(max_contour)
+    box = np.int0(cv2.boxPoints(rect))
+    def contour_sort_rule(point):
+        x, y = point
+        # 根据越上越左、越上越右、越下越左、越下越右的顺序进行排序
+        if x <= image.shape[0] // 2 and y <= image.shape[1] // 2:
+            return 1  # 越左越上
+        elif x > image.shape[0] // 2 and y <= image.shape[1] // 2:
+            return 2  # 越右越上
+        elif x <= image.shape[0] // 2 and y > image.shape[1] // 2:
+            return 3  # 越左越下
+        else:
+            return 4  # 越右越下
+    # 根据排序规则对坐标点进行排序
+    box = sorted(box, key=contour_sort_rule)
+    y1,x1=box[0]
+    y2,x2=box[1]
+    y3,x3=box[2]
+    y4,x4=box[3]
+    image=cv2.line(image,(y1,x1+5),(y2+20,x2+5),(0,255,0),thickness=2)
+    image=cv2.line(image,(y1,x1+5),(y4,x1+100),(0,255,0),thickness=2)
+    # cv2.drawContours(image, [box], -1, (0, 255, 0), thickness=5)
+    cv2.imwrite(src_path,image)
+
+
+def cv_init_img(src_path,uuid,is_compress=True):
     '''
     初始化优化图片，使用压缩和透视变换
     '''
@@ -652,12 +702,64 @@ def cv_init_img(src_path,uuid):
     save_transform = fiul.uuid_save_transform_img(uuid)
     target = src_path
     #压缩图片
-    flag_compress = get_compress(target,save_compress,CVConfig.cv_compress)
-    if flag_compress:
-        target = save_compress
+    if is_compress:
+        flag_compress = get_compress(target,save_compress,CVConfig.cv_compress)
+        if flag_compress:
+            target = save_compress
     #透视转化
     flag_transform=get_transform(target,save_transform)
     if flag_transform:
         target = save_transform
     return target
-    
+
+
+
+def cv_sharpening(img):
+    res = img
+    img=cv2.imread(img)
+    kernel = np.array([[-1,-1,-1],[-1,9,-1],[-1,-1,-1]])
+    # 应用锐化内核
+    img = cv2.filter2D(img, -1, kernel)
+    cv2.imwrite(res,img)
+    return res
+
+
+def cv_init_video(video_path,frame_path):
+    frame_name = []
+    img_list = []
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)  # 获取视频帧率
+    duration = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) / fps)  # 获取视频时长（秒）
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    if duration<1:
+        return img_list
+    for i in range(1,int(duration)+1):
+        frame_name.append(int(i*fps))
+    frame_list = []  # 存储帧的列表
+    frame_count = 0
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame_count += 1
+        if frame_count in frame_name:
+            frame  = frame[height-height//6:, width//8:width-width//8,:]
+            frame_list.append(frame)
+    cap.release()
+    for i in range(0,len(frame_list)-1):
+        gray1 = cv2.cvtColor(frame_list[i], cv2.COLOR_BGR2GRAY)
+        _,gray1 = cv2.threshold(gray1, 215, 255, cv2.THRESH_BINARY)
+        gray2 = cv2.cvtColor(frame_list[i+1], cv2.COLOR_BGR2GRAY)
+        _,gray2 = cv2.threshold(gray2, 215, 255, cv2.THRESH_BINARY)
+        if cal_stderr(gray1,gray2)>1.5:
+            path = frame_path+"/"+str(i)+"_frame.jpg"
+            img_list.append(path)
+            cv2.imwrite(path,frame_list[i])
+    return img_list
+
+def cal_stderr(img, imgo=None):
+    if imgo is None:
+        return (img ** 2).sum() / img.size * 100
+    else:
+        return ((img - imgo) ** 2).sum() / img.size * 100

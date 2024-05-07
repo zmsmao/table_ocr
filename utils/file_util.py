@@ -5,6 +5,11 @@ from config.file_config import FileConfig
 
 file_config=FileConfig()
 
+# 获取文件扩展名
+def get_extension_file(file_name):
+    file_extension = os.path.splitext(file_name)[1]
+    return file_extension
+
 def save_image(base64_data, save_path):
         """
         将Base64编码的图片数据保存为图片文件
@@ -21,6 +26,16 @@ def save_image(base64_data, save_path):
         except Exception as e:
             print(e)
             return False
+        
+
+def encode_image(file):
+    with open(file,'rb') as f:
+        img_data = f.read()
+        base64_data = base64.b64encode(img_data)
+        #print(base64_data)
+        # 如果想要在浏览器上访问base64格式图片，需要在前面加上：data:image/jpeg;base64,
+        return base64_data
+
     
 def extract_first_element(data):
     result = ""
@@ -41,6 +56,16 @@ def dir_delete(dir):
         shutil.rmtree(dir)
         print(dir,"删除成功")
 
+def list_dir(dir_path):
+    '''
+        通过 listdir 得到的是仅当前路径下的文件名，不包括子目录中的文件，如果需要得到所有文件需要递归
+    '''
+    res=[]
+    for i in os.listdir(dir_path):
+        file_path = os.path.join(dir_path, i)
+        if os.path.isdir(file_path):
+            res.append(file_path)
+    return res
 def listdir(path, coord_img_path):  # 传入存储的list
     for file in os.listdir(path):
         file_path = os.path.join(path, file)
@@ -103,6 +128,24 @@ def uuid_save_mkdirs(uuid):
     os.makedirs(txt_result, exist_ok=True)
     return root,coord,main,other,txt_result
 
+def uuid_save_video_img(uuid,suffix):
+    root=uuid_save_root(uuid)+"/"
+    di=root+file_config.cv_video_img_name+suffix
+    os.makedirs(os.path.dirname(root), exist_ok=True)
+    return di
+
+def uuid_save_mkdir_video_frame(uuid):
+    root=uuid_save_root(uuid)
+    frame=root+"/"+file_config.frame
+    os.makedirs(frame, exist_ok=True)
+    return frame
+
+def uuid_save_web_file(file,uuid):
+    suffix=get_extension_file(file_name=file.filename)
+    di = uuid_save_video_img(uuid,suffix)
+    file.save(di)
+    return di
+
 def uuid_save_img(uuid,name):
     root=uuid_save_root(uuid)+"/"+name
     return root
@@ -157,6 +200,12 @@ def uuid_save_rotate_img(uuid):
 def uuid_save_compress_img(uuid):
     root=uuid_save_root(uuid)+"/"
     di=root+file_config.cv_compress_img
+    os.makedirs(os.path.dirname(root), exist_ok=True)
+    return di
+
+def uuid_save_draw_rect_img(uuid):
+    root=uuid_save_root(uuid)+"/"
+    di=root+file_config.cv_draw_max_rect
     os.makedirs(os.path.dirname(root), exist_ok=True)
     return di
 
