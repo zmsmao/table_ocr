@@ -1,0 +1,222 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Image/Video Upload and API Response Display</title>
+    <style>
+        #container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+
+        #left {
+            width: 50%;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #right {
+            width: 50%;
+            padding: 20px;
+        }
+
+        #progressBar {
+            width: 100%;
+            height: 10px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+
+        #progressBar span {
+            display: block;
+            height: 100%;
+            background-color: #4caf50;
+            border-radius: 5px;
+            width: 0;
+            transition: width 0.3s;
+        }
+
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        #buttonContainer {
+            display: flex;
+            align-items: center;
+        }
+
+        #fileInput {
+            margin-right: 10px;
+        }
+        
+        #loadingIndicator {
+            margin-top: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #previewContainer {
+            margin-top: 20px;
+        }
+
+        #previewImage,
+        #previewVideo {
+            max-width: 100%;
+            max-height: 300px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="left">
+            <h4>Upload Image/Video</h4>
+            <div id="buttonContainer">
+                <input type="file" id="fileInput" accept="image/*, video/*">
+                <button id="sendButton" disabled>Send</button>
+            </div>
+            <div id="previewContainer"></div>
+        </div>
+
+<!--        <div id="right">
+            <h4 align="center">API Response</h4>
+            <div id="prompt" style="color: red;"></div>
+            <pre id="response"></pre>
+            <div id="loadingIndicator" style="display: none;">
+                <div class="loader"></div>
+            </div>
+            <p id="elapsedTime"></p>
+        </div>
+    </div>
+-->
+    <div id="right">
+        <h4 align="center">API Response</h4>
+        <div id="prompt" style="color: red;"></div>
+        <pre id="response" style="max-height: 550px; overflow-y: scroll;"></pre>
+        <div id="loadingIndicator" style="display: none;">
+            <div class="loader"></div>
+        </div>
+        <p id="elapsedTime"></p>
+    </div>
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const imageInput = document.getElementById('imageInput');
+        const previewContainer = document.getElementById('previewContainer');
+        const sendButton = document.getElementById('sendButton');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+
+        fileInput.addEventListener('change', function() {
+            const file = fileInput.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const fileType = file.type;
+                    if (fileType.startsWith('image/')) {
+                        const previewImage = document.createElement('img');
+                        previewImage.src = e.target.result;
+                        previewImage.style.maxWidth = '700px';
+                        previewImage.style.maxHeight = '700px';
+                        previewContainer.innerHTML = '';
+                        previewContainer.appendChild(previewImage);
+                    } else if (fileType.startsWith('video/')) {
+                        const previewVideo = document.createElement('video');
+                        previewVideo.src = e.target.result;
+                        previewVideo.style.maxWidth = '700px';
+                        previewVideo.style.maxHeight = '700px';
+                        previewVideo.controls = true;
+                        previewContainer.innerHTML = '';
+                        previewContainer.appendChild(previewVideo);
+                    }
+                    sendButton.disabled = false;
+                }
+                reader.readAsDataURL(file);
+            }
+        })
+
+        sendButton.addEventListener('click', function() {
+            const file = fileInput.files[0];
+            const fileData = new FormData();
+            fileData.append('file', file);
+        
+            const requestOptions = {
+                method: 'POST',
+                body: fileData,
+                cache: 'no-cache'
+            };
+        
+            // 禁用相关元素
+            sendButton.disabled = true;
+            fileInput.disabled = true;
+        
+            // 显示加载指示器
+            loadingIndicator.style.display = 'block';
+        
+            // 开始计时
+            const startTime = Date.now();
+        
+            // 发送请求前清空API响应数据
+            const responseElement = document.getElementById('response');
+            const responseElementTime = document.getElementById("elapsedTime");
+            const responsePrompt = document.getElementById("prompt");
+            responseElement.textContent = "";
+            responseElementTime.textContent = "";
+            responsePrompt.textContent = "";
+        
+            // 发送请求
+            fetch("http://localhost:8111/process/vidImg", requestOptions)
+                .then(response => response.json())
+                .then(json => {
+                    // 在右侧显示接口返回的JSON格式数据（格式化）
+                    const responseElement = document.getElementById('response');
+                    responseElement.textContent = JSON.stringify(json, null, 4);
+        
+                    // 结束计时并计算用时
+                    const endTime = Date.now();
+                    const elapsedTime = endTime - startTime;
+        
+                    // 将毫秒转换为时分秒
+                    const hours = Math.floor(elapsedTime / (1000 * 60 * 60));
+                    const minutes = Math.floor((elapsedTime % (1000 * 60 * 60)) / (1000 * 60));
+                    const seconds = Math.floor((elapsedTime % (1000 * 60)) / 1000);
+        
+                    // 显示用时时间
+                    const elapsedTimeElement = document.getElementById('elapsedTime');
+                    elapsedTimeElement.textContent = `Elapsed Time: ${hours}h ${minutes}m ${seconds}s`;
+        
+                    // 显示提示
+                    const responsePrompt = document.getElementById("prompt");
+                    responsePrompt.textContent = "请注意，任何模型的识别准确率都不可能达到100%，可能会存在误识别和错误文本的情况。同时，要确保上传的图片质量清晰，以获取更好的结果。";
+        
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            })
+            .finally(() => {
+                // 隐藏加载指示器
+                loadingIndicator.style.display = 'none';
+
+                // 启用相关元素
+                sendButton.disabled = false;
+                fileInput.disabled = false;
+            });
+        });
+    </script>
+</body>
+</html>
