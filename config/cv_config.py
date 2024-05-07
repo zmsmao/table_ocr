@@ -21,4 +21,4 @@ class CVConfig:
     
     cv_is_split = False
     #图片压缩比例
-    cv_compress = 1.45*1024*1024
+    cv_compress = 1.3*1024*1024

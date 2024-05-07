@@ -3,6 +3,8 @@ class FileConfig:
     main='main'
     # 存储cv优化图
     other='other'
+    #存储视频帧
+    frame='frame'
     # 存储分隔图
     coord='coord'
     # 存储识别结果
@@ -31,3 +33,11 @@ class FileConfig:
     cv_intelligence_img = 'intelligence_cv.jpg'
     
     cv_border_lines_img = 'lines_cv.jpg'
+    
+    cv_border_lines_img = 'lines_cv.jpg'
+    
+    cv_accept_name = ' accept_cv'
+    
+    cv_draw_max_rect = 'draw_cv.jpg'
+
+    cv_video_img_name = 'video_img_cv'

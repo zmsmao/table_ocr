@@ -3,6 +3,27 @@ from config.file_config import FileConfig
 import re
 
 
+
+IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'svg', 'webp',
+                    'tiff', 'ico', 'jfif', 'pjpeg', 'pjp', 'heic', 'bat',
+                    'bpg', 'raw', 'exif'}
+VIDEO_EXTENSIONS = {'mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv', 'mpeg',
+                    '3gp', 'm4v', 'divx', 'vob', 'ogv', 'ogg', 'swf',
+                    'asf', 'rm', 'rmvb', 'm2ts', 'mts', 'ts', 'webm',
+                    'mpg', 'mp2', 'mpe', 'mpv', 'm2v', 'm4p', 'm4b',
+                    'm4r', 'm4a', 'aac', 'flac', 'wav', 'opus', 'srt',
+                    'ass', 'ssa', 'vtt'}
+
+def get_file_type(filename):
+    extension = filename.rsplit('.', 1)[1].lower()
+    if extension in IMAGE_EXTENSIONS:
+        return 1  # 图片类型
+    elif extension in VIDEO_EXTENSIONS:
+        return 2  # 视频类型
+    else:
+        return 0  # 其他类型
+
+
 def generate_unique_id():
     """
     生成长度为8的只包含字母和数字的唯一ID
