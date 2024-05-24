@@ -92,7 +92,7 @@ web_ocr
      pip install "paddleocr==2.6.1.3" -i https://pypi.tuna.tsinghua.edu.cn/simple
      ```
 
-  5. 其他安装依赖
+  5. 其他安装依赖 使用vscode时需要初始化conda init 再切换环境，之后查看环境pip list 看看是否还需要安装
 
      ```bash
      pip install opencv-python==4.6.0.66 -i https://pypi.tuna.tsinghua.edu.cn/simple
@@ -105,6 +105,8 @@ web_ocr
   6. bug解决
 
      ```bash
+     # 解决protobuf 不兼容问题。
+     pip install protobuf==3.20.0
      # 解决linux动态链接库bug
      conda install nomkl
      ```
@@ -236,7 +238,7 @@ web_ocr
 
 > **/process/res**
 >
-> 说明: 这个请求方法只对工作票文字识别提取有用
+> 说明: 这个请求方法只对工作票文字识别提取有用 其他测试无效。
 
 2. 请求方式
 
