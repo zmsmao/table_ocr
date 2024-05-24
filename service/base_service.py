@@ -102,7 +102,7 @@ def all(data,uuid,executor):
     # fiul.list_one_dir(coord,coord_img_path)
     # 智能识别
     name=intelligence_splie(data,uuid,table_engine,coord_img_path,is_check_word=False)
-    # img_name=fiul.get_file_name(coord_img_path)
+    img_name=fiul.get_file_name(coord_img_path)
     objs=[]
     for i in range(len(coord_img_path)):
         result=table_engine.ocr(coord_img_path[i])
