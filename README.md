@@ -92,7 +92,7 @@ web_ocr
      pip install "paddleocr==2.6.1.3" -i https://pypi.tuna.tsinghua.edu.cn/simple
      ```
 
-  5. 其他安装依赖 使用vscode时需要初始化conda init 再切换环境，之后查看环境pip list 看看是否还需要安装
+  5. 其他安装依赖 使用vscode时需要初始化conda init 再切换环境，如果正常能切换环境则不再需要，之后查看环境pip list 看看是否还需要安装
 
      ```bash
      pip install opencv-python==4.6.0.66 -i https://pypi.tuna.tsinghua.edu.cn/simple
