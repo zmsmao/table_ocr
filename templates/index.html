@@ -59,6 +59,7 @@
                     <div class="text-center text-gray-400">
                         <i class="fa-regular fa-image text-4xl mb-2"></i>
                         <p class="text-sm">请选择图像或视频文件以预览</p>
+                        <p class="text-xs text-gray-400 mt-1">（双击图片可单独放大查看）</p>
                     </div>
                 </div>
             </div>
@@ -92,6 +93,16 @@
 
     </main>
 
+    <!-- 图片全屏查看模态框 (Modal) -->
+    <div id="imageModal" class="fixed inset-0 z-50 bg-black/80 hidden items-center justify-center p-4 cursor-zoom-out">
+        <div class="relative max-w-full max-h-full flex items-center justify-center">
+            <img id="modalImage" class="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl" src="" alt="大图预览">
+            <button id="closeModal" class="absolute top-4 right-4 text-white bg-black/50 hover:bg-black/70 rounded-full w-10 h-10 flex items-center justify-center text-lg transition-all">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+    </div>
+
     <!-- 业务逻辑脚本 -->
     <script>
         const API_BASE_URL = "http://localhost:8111";
@@ -105,7 +116,10 @@
             prompt: document.getElementById('prompt'),
             loadingIndicator: document.getElementById('loadingIndicator'),
             statusPlaceholder: document.getElementById('statusPlaceholder'),
-            elapsedTime: document.getElementById('elapsedTime')
+            elapsedTime: document.getElementById('elapsedTime'),
+            imageModal: document.getElementById('imageModal'),
+            modalImage: document.getElementById('modalImage'),
+            closeModal: document.getElementById('closeModal')
         };
 
         let currentFileDataURL = null;
@@ -130,7 +144,16 @@
                 if (fileType.startsWith('image/')) {
                     const img = document.createElement('img');
                     img.src = currentFileDataURL;
-                    img.className = "max-h-full max-w-full object-contain rounded-lg shadow";
+                    img.className = "max-h-full max-w-full object-contain rounded-lg shadow cursor-pointer hover:opacity-95 transition-opacity";
+                    img.title = "双击放大图片";
+                    
+                    // 绑定双击放大事件
+                    img.addEventListener('dblclick', function() {
+                        dom.modalImage.src = currentFileDataURL;
+                        dom.imageModal.classList.remove('hidden');
+                        dom.imageModal.classList.add('flex');
+                    });
+
                     dom.previewContainer.appendChild(img);
                     dom.sendButton.disabled = false;
                 } else if (fileType.startsWith('video/')) {
@@ -151,6 +174,27 @@
             };
             
             reader.readAsDataURL(file);
+        });
+
+        // 关闭模态框逻辑
+        function closeImageModal() {
+            dom.imageModal.classList.add('hidden');
+            dom.imageModal.classList.remove('flex');
+            dom.modalImage.src = "";
+        }
+
+        dom.closeModal.addEventListener('click', closeImageModal);
+        dom.imageModal.addEventListener('click', function(e) {
+            // 点击背景区域时关闭
+            if (e.target === dom.imageModal) {
+                closeImageModal();
+            }
+        });
+        // ESC 键关闭大图
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && !dom.imageModal.classList.contains('hidden')) {
+                closeImageModal();
+            }
         });
 
         // 核心请求分发
@@ -241,6 +285,7 @@
                 <div class="text-center text-gray-400">
                     <i class="fa-regular fa-image text-4xl mb-2"></i>
                     <p class="text-sm">请选择图像或视频文件以预览</p>
+                    <p class="text-xs text-gray-400 mt-1">（双击图片可单独放大查看）</p>
                 </div>`;
             dom.sendButton.disabled = true;
         }

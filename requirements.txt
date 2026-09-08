@@ -1,0 +1,24 @@
+# ============================================================
+#  table_ocr 依赖清单
+#  运行环境：Python 3.9.23
+#  安装：pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+# ============================================================
+
+# ---------- Web 服务 ----------
+Flask==3.1.3
+urllib3==2.5.0
+shutilwhich==1.1.0
+# Werkzeug 由 Flask 3.1.3 自动解析（要求 >=3.1），不单独锁定
+
+# ---------- 图像处理 ----------
+# 三个包都提供 cv2 模块，最终生效版本取决于安装顺序，请勿调整顺序
+opencv-python==4.6.0.66
+opencv-contrib-python==4.6.0.66
+opencv-python-headless==4.8.0.74
+numpy==1.26.4            # paddlepaddle 2.x 不支持 numpy 2.x，必须锁在 1.x
+Pillow==10.4.0           # paddleocr 内部依赖
+
+# ---------- OCR 推理 ----------
+protobuf==3.20.2         # paddle 2.x 要求 <4，装高版本会触发兼容报错
+paddlepaddle==2.6.2      # CPU 版，GPU 安装方式见 README
+paddleocr==2.7.3         # 需 >= 2.7 才能加载仓库内置的 PP-OCRv4 模型
