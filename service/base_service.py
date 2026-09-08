@@ -1,245 +1,305 @@
+"""
+表格 / 工作票识别核心服务
+架构：多进程高吞吐量模式。依托 Multiprocessing.Pool，由 init_worker_engine 进行模型预热。
+"""
+import os
 import cv2
+import logging
+from typing import List, Dict, Any, Tuple, Optional
+
+# 核心依赖
+from paddleocr import PaddleOCR
+from rules.base_rules import rules
+
+# 配置与实体域
+from config.file_config import FileConfig
+from config.model_config import ModelConfig
+from config.cv_config import CVConfig
+from domain.ocr_result_common import OCRCommon, OCRAll
+
+# 工具类
 import utils.common_util as comm
 import utils.file_util as fiul
 import utils.cv_util as cvut
-import utils.speck_util as spul
-from domain.ocr_result_common import OCRCommon,OCRAll
-from config.file_config import FileConfig
-from config.model_config import ModelConfig
-from paddleocr import PaddleOCR
-from rules.base_rules import rules
-from config.cv_config import CVConfig
-# import adapter.adapter_route as adp_ru
+import utils.image_util as imut
+import utils.geometry_util as geut
 
+# 配置日志记录器
+logger = logging.getLogger(__name__)
 
-def com_video_img(type:int,uuid:str,di:str):
-    print("UuidPath:  io/save_path/"+uuid)
-    table_engine = PaddleOCR(det_model_dir=ModelConfig.model_det_path,
-                    rec_model_dir=ModelConfig.model_rec_path,
-                    use_gpu= ModelConfig.is_use_gpu,
-                    cls_model_dir=ModelConfig.cls_model_dir,
-                    lang=ModelConfig.lang,use_angle_cls=True)
-    if type==1:
-        #压缩图片
-        save_compress=fiul.uuid_save_compress_img(uuid)
-        target = di
-        flag_compress = cvut.get_compress(target,save_compress,CVConfig.cv_compress)
-        if flag_compress:
+# ==============================================================================
+# 全局模型缓存 (每个子进程独立拥有一份)
+# ==============================================================================
+_WORKER_OCR_ENGINE: Optional[PaddleOCR] = None
+
+# 修改后：
+def init_worker_engine():
+    """
+    子进程初始化函数：供 Multiprocessing.Pool 初始化时自动调用。
+    生命周期内仅执行一次，避免重复加载模型的极高耗时。
+    """
+    # 强制配置子进程日志格式与等级，放开 INFO 和 DEBUG 级别拦截
+    logging.basicConfig(
+        level=logging.INFO, 
+        format='[%(asctime)s] [%(levelname)s] %(name)s:%(lineno)d - %(message)s'
+    )
+    
+    global _WORKER_OCR_ENGINE
+    if _WORKER_OCR_ENGINE is None:
+        logger.info(f"[PID {os.getpid()}] 正在分配显存/内存，预热 PaddleOCR 模型...")
+        _WORKER_OCR_ENGINE = PaddleOCR(
+            det_model_dir=ModelConfig.model_det_path,
+            rec_model_dir=ModelConfig.model_rec_path,
+            use_gpu=ModelConfig.is_use_gpu,
+            cls_model_dir=ModelConfig.cls_model_dir,
+            lang=ModelConfig.lang,
+            use_angle_cls=True,
+            show_log=False  # 关闭底层繁杂日志，保持控制台整洁
+        )
+        logger.info(f"[PID {os.getpid()}] 模型加载完成，工作进程就绪！")
+
+def _get_engine() -> PaddleOCR:
+    """
+    获取当前进程的模型引擎。
+    作为降级机制：如果直接调用未经过 Pool 初始化的进程，会自动进行懒加载预热。
+    """
+    global _WORKER_OCR_ENGINE
+    if _WORKER_OCR_ENGINE is None:
+        logger.warning(f"[PID {os.getpid()}] 检测到未预热直接调用，触发懒加载机制！")
+        init_worker_engine()
+    return _WORKER_OCR_ENGINE
+
+# ==============================================================================
+# 核心业务逻辑
+# ==============================================================================
+
+def com_video_img(media_type: int, uuid: str, target_dir: str) -> List[str]:
+    """处理视频与图片的通用识别逻辑"""
+    logger.info(f"[Task={uuid}] 开始执行 com_video_img, Media Type: {media_type}")
+    engine = _get_engine()
+
+    if media_type == 1:
+        # 处理图片类型
+        logger.debug(f"[Task={uuid}] 执行图片压缩与识别...")
+        save_compress = fiul.uuid_save_compress_img(uuid)
+        target = target_dir
+        
+        # 压缩验证
+        if imut.get_compress(target, save_compress, CVConfig.cv_compress):
             target = save_compress
-        print("UuidPath:  io/save_path/"+uuid)
-        result=table_engine.ocr(target,rec=True)
-        result=comm.extract_text_obj(result)
-        res = []
-        for i  in result:
-            res.append(i[1])
-        return res
-    if type==2:
-        frame=fiul.uuid_save_mkdir_video_frame(uuid)
-        img_list = cvut.cv_init_video(di,frame)
-        list_txt_no_filter_pj=[]
-        list_txt_filter_pj=[]
-        for i in range(len(img_list)):
-            result=table_engine.ocr(img_list[i])
-            lists=comm.extract_text_obj(result)
-            txt_no_filter_pj=''
-            txt_filter_pj=''
-            for j in range(len(lists)):
-                no_filter_pj=lists[j][1]
-                filter_pj=comm.filter_text(no_filter_pj)
-                txt_filter_pj+=filter_pj
-                txt_no_filter_pj+=no_filter_pj
-            if len(txt_filter_pj)>0:
+            
+        result = engine.ocr(target, rec=True)
+        extracted_texts = comm.extract_text_obj(result)
+        logger.info(f"[Task={uuid}] 图片识别完成，提取文本 {len(extracted_texts)} 条")
+        return [item[1] for item in extracted_texts]
+
+    if media_type == 2:
+        # 处理视频类型
+        logger.debug(f"[Task={uuid}] 提取视频帧并执行批处理...")
+        frame = fiul.uuid_save_mkdir_video_frame(uuid)
+        img_list = imut.cv_init_video(target_dir, frame)
+        
+        list_txt_no_filter_pj = []
+        list_txt_filter_pj = []
+        
+        for img in img_list:
+            result = engine.ocr(img)
+            lists = comm.extract_text_obj(result)
+            
+            txt_no_filter_pj = "".join([lst[1] for lst in lists])
+            txt_filter_pj = "".join([comm.filter_text(lst[1]) for lst in lists])
+            
+            if txt_filter_pj:
                 list_txt_no_filter_pj.append(txt_no_filter_pj)
                 list_txt_filter_pj.append(txt_filter_pj)
-        res=[]
-        res.append(list_txt_no_filter_pj[0])
-        for i in range(0,len(list_txt_no_filter_pj)-1):
-            if list_txt_filter_pj[i].find(list_txt_filter_pj[i+1])==-1:
-                res.append(list_txt_no_filter_pj[i+1])
+                
+        if not list_txt_no_filter_pj:
+            logger.warning(f"[Task={uuid}] 视频未识别到有效文本")
+            return []
+
+        # 过滤重复信息
+        res = [list_txt_no_filter_pj[0]]
+        for i in range(len(list_txt_no_filter_pj) - 1):
+            if list_txt_filter_pj[i].find(list_txt_filter_pj[i + 1]) == -1:
+                res.append(list_txt_no_filter_pj[i + 1])
+                
+        logger.info(f"[Task={uuid}] 视频帧识别完成，去重后保留 {len(res)} 条记录")
         return res
 
-def common(data,uuid):
-    table_engine = PaddleOCR(det_model_dir=ModelConfig.model_det_path,
-                            rec_model_dir=ModelConfig.model_rec_path,
-                            use_gpu= ModelConfig.is_use_gpu,
-                            cls_model_dir=ModelConfig.cls_model_dir,
-                            lang=ModelConfig.lang,use_angle_cls=True)
-    print("UuidPath:  io/save_path/"+uuid)
-    root_dir,name=com_path(data=data,uuid=uuid)
-    return table_engine.ocr(root_dir+"/"+name,det=False)
-    # return comm_ocr(root_dir+"/"+name,name,uuid,table_engine)
+    return []
 
-def res(data,uuid,executor):
-    coord_img_path=[]
-    table_engine = PaddleOCR(det_model_dir=ModelConfig.model_det_path,
-                            rec_model_dir=ModelConfig.model_rec_path,
-                            use_gpu= ModelConfig.is_use_gpu,
-                            cls_model_dir=ModelConfig.cls_model_dir,
-                            lang=ModelConfig.lang,use_angle_cls=True)
-    print("UuidPath:  io/save_path/"+uuid)
-    # 普通识别
-    # coord,txt_result,name=cv_path(data,uuid)
-    # fiul.list_one_dir(coord,coord_img_path)
-    # 智能识别
-    key_word = ["种","记录","带电","附页"]
-    name=intelligence_splie(data,uuid,table_engine,coord_img_path,False,key_word=key_word)
-    # result= adp_ru.adapter_rules_route(coord_img_path,table_engine,uuid,name,route)
-    result=rules(coord_img_path=coord_img_path,table_engine=table_engine,uuid=uuid,name=name)
+
+def common(data: Dict[str, Any], uuid: str) -> Any:
+    """基础全图 OCR 识别"""
+    logger.info(f"[Task={uuid}] 开始基础整图识别 (common)")
+    engine = _get_engine()
+    
+    root_dir, name = _save_and_get_path(data, uuid)
+    target_path = f"{root_dir}/{name}"
+    
+    result = engine.ocr(target_path, det=False)
+    logger.info(f"[Task={uuid}] 基础识别完成")
     return result
 
-def all(data,uuid,executor):
-    # 第一种方案 先分割再识别
-    table_engine = PaddleOCR(det_model_dir=ModelConfig.model_det_path,
-                            rec_model_dir=ModelConfig.model_rec_path,
-                            use_gpu= ModelConfig.is_use_gpu,
-                            cls_model_dir=ModelConfig.cls_model_dir,
-                            lang=ModelConfig.lang,use_angle_cls=True)
-    print("UuidPath:  io/save_path/"+uuid)
-    coord_img_path=[]
-    img_name=[]
-    #普通分隔
-    # coord,txt_result,name=cv_path(data,uuid)
-    # fiul.list_one_dir(coord,coord_img_path)
-    # 智能识别
-    name=intelligence_splie(data,uuid,table_engine,coord_img_path,is_check_word=False)
-    img_name=fiul.get_file_name(coord_img_path)
-    objs=[]
-    for i in range(len(coord_img_path)):
-        result=table_engine.ocr(coord_img_path[i])
-        one=one_json(result,name,uuid)
-        #0,1,2,3 y y+h x x+w 后缀
-        s_index=str(img_name[i]).split("_")
-        obj=OCRAll()
-        obj._bbox=[[s_index[2],s_index[0]],[s_index[2],s_index[1]]
-                ,[s_index[3],s_index[0]],[s_index[3],s_index[1]]]
-        obj._name=name
-        obj._result=one
-        obj._suffix=s_index[-1]
-        obj._bbox_path = FileConfig.save_path+"/"+uuid+"/"+FileConfig.coord+"/"+img_name[i]
-        objs.append(obj.__dict__())
-    return objs
-    #第二种方案 再识别在分割
-    # ans = common(data=data,uuid=uuid)
-    # index_ = []
-    # name = ans[0]['name']
-    # for i in range(len(ans)):
-    #     index_.append(ans[i]['coordinates'])
-    # root = fiul.uuid_save_root(uuid)
-    # image = cv2.imread(root+"/"+name)
-    # height, width, channels = image.shape
-    # rectangle = spul.expand_coordinates(spul.calculate_bounding_box(index_),width,height,40,10)
-    # x1, y1 = map(int, rectangle[0])
-    # x2, y2 = map(int, rectangle[1])
-    # roi = image[y1:y2, x1:x2]
-    # image_name = root+"/"+uuid+name
-    # cv2.imwrite(image_name,roi)
-    # coord,txt_result = cvut.cv_build(uuid,uuid+name)
-    # fiul.list_one_dir(coord,coord_img_path)
-    # img_name=fiul.get_file_name(coord_img_path)
-    # index_s=[]
-    # x_t = x1
-    # y_t = y1
-    # for i in img_name:
-    #     s_index=str(i).split("_")
-    #     tmp = [[int(s_index[2]),int(s_index[0])],[int(s_index[2]),int(s_index[1])]
-    #                 ,[int(s_index[3]),int(s_index[0])],[int(s_index[3]),int(s_index[1])]]
-    #     index_s.append(tmp)
+
+def res(data: Dict[str, Any], uuid: str, executor: Any = None) -> Any:
+    """工作票/规则结构化数据提取"""
+    logger.info(f"[Task={uuid}] 开始智能提取识别 (res)")
+    engine = _get_engine()
+    coord_img_path: List[str] = []
     
-    # objs=[]
-    # for i in index_s:
-    #     obj=OCRAll()
-    #     obj._result = []
-    #     for j in ans:
-    #         ts = [[int(point[0])-x_t, int(point[1])-y_t] for point in j['coordinates']]
-    #         if cvut.is_inside(i,ts):
-    #             obj._result.append(j)
-    #     objs.append(obj.__dict__())
-    # print()
-    # return objs
-                
-def com_path(data,uuid):
-    image = data['image']
-    suffix = data['suffix']
-    name = data['name']
-    name=FileConfig.cv_accept_name+suffix
-    root_dir = fiul.uuid_save_root(uuid)
-    fiul.save_image(image,root_dir+"/"+name)
-    return root_dir,name
+    # 智能识别分割
+    key_words = ["种", "记录", "带电", "附页"]
+    logger.debug(f"[Task={uuid}] 执行智能分割，探测关键词: {key_words}")
+    name = intelligence_split(
+        data=data, 
+        uuid=uuid, 
+        table_engine=engine, 
+        coord_img_path=coord_img_path, 
+        is_check_word=False, 
+        key_words=key_words
+    )
+    
+    logger.debug(f"[Task={uuid}] 智能分割完成，开始匹配提取规则...")
+    result = rules(coord_img_path=coord_img_path, table_engine=engine, uuid=uuid, name=name)
+    logger.info(f"[Task={uuid}] 规则提取完成")
+    return result
 
-def cv_path(data,uuid):
-    root_dir,name=com_path(data,uuid)
-    coord,txt_result=cvut.cv_build(uuid,name)
-    return coord,txt_result,name
 
-def one_json(result,name,uuid):
-    lists=comm.extract_text_obj(result)
-    objs=[]
-    for i in lists:
-        obj=OCRCommon()
-        obj._coordinates=i[0]
-        obj._txt_result=i[1]
-        obj._name=name
-        obj._txt_rate=i[2]
-        obj._uuid = uuid
-        objs.append(obj.__dict__())
+def all(data: Dict[str, Any], uuid: str, executor: Any = None) -> List[Dict[str, Any]]:
+    """表格按坐标完整分割 + 逐格识别装配"""
+    logger.info(f"[Task={uuid}] 开始执行全量表格分割与识别 (all)")
+    engine = _get_engine()
+    coord_img_path: List[str] = []
+    
+    # 获取智能分割图像切片路径
+    name = intelligence_split(data, uuid, engine, coord_img_path, is_check_word=False)
+    img_names = fiul.get_file_name(coord_img_path)
+    
+    objs = []
+    logger.debug(f"[Task={uuid}] 共有 {len(coord_img_path)} 个切片需要分析")
+    
+    for i, path in enumerate(coord_img_path):
+        result = engine.ocr(path)
+        one_result = _format_ocr_result(result, name, uuid)
+        
+        # 从文件名中解析坐标位置
+        s_index = str(img_names[i]).split("_")
+        obj = OCRAll()
+        obj._bbox = [
+            [s_index[2], s_index[0]], [s_index[2], s_index[1]],
+            [s_index[3], s_index[0]], [s_index[3], s_index[1]]
+        ]
+        obj._name = name
+        obj._result = one_result
+        obj._suffix = s_index[-1]
+        obj._bbox_path = f"{FileConfig.save_path}/{uuid}/{FileConfig.coord}/{img_names[i]}"
+        
+        objs.append(obj.__dict__)
+        
+    logger.info(f"[Task={uuid}] 全量表格分割装配完毕")
     return objs
 
-def comm_ocr(path,name,uuid,table_engine):
-    result=table_engine.ocr(path)
-    return one_json(result,name,uuid)
+# ==============================================================================
+# 内部工具与支撑函数 (Private Functions)
+# ==============================================================================
+
+def _save_and_get_path(data: Dict[str, Any], uuid: str) -> Tuple[str, str]:
+    """统一的落盘逻辑"""
+    suffix = data.get('suffix', '')
+    name = f"{FileConfig.cv_accept_name}{suffix}"
+    root_dir = fiul.uuid_save_root(uuid)
+    fiul.save_image(data.get('image'), f"{root_dir}/{name}")
+    return root_dir, name
 
 
-def intelligence_splie( data,uuid
-    ,table_engine:PaddleOCR
-    ,coord_img_path:list
-    ,is_check_word=False
-    ,key_word:list=[]):
-    '''
-    通过一次先识别整体轮廓即可，无需识别文字。
-    is_check_word : 检测文字
-    key_word: 先开启is_check_word，再使用
-    '''
-    root_dir,name=com_path(data,uuid)
-    root_image = root_dir+"/"+name
-    target_path = cvut.cv_init_img(root_image,uuid)
+def _format_ocr_result(result: Any, name: str, uuid: str) -> List[Dict[str, Any]]:
+    """格式化 OCR 返回结果结构"""
+    extracted_lists = comm.extract_text_obj(result)
+    return [
+        {
+            "_coordinates": item[0],
+            "_txt_result": item[1],
+            "_name": name,
+            "_txt_rate": item[2],
+            "_uuid": uuid
+        }
+        for item in extracted_lists
+    ]
+
+
+def _exec_comm_ocr(path: str, name: str, uuid: str, table_engine: PaddleOCR) -> List[Dict[str, Any]]:
+    """针对具体文件的公用 OCR 封装"""
+    result = table_engine.ocr(path)
+    return _format_ocr_result(result, name, uuid)
+
+
+def intelligence_split(
+    data: Dict[str, Any], 
+    uuid: str, 
+    table_engine: PaddleOCR, 
+    coord_img_path: List[str], 
+    is_check_word: bool = False, 
+    key_words: Optional[List[str]] = None
+) -> str:
+    """
+    智能表格轮廓分割。
+    通过一次无文本识别（仅轮廓），锁定核心表格坐标区域并裁剪，屏蔽外部无用信息。
+    """
+    key_words = key_words or []
+    
+    root_dir, name = _save_and_get_path(data, uuid)
+    root_image = f"{root_dir}/{name}"
+    target_path = imut.cv_init_img(root_image, uuid)
+    
     image = cv2.imread(target_path)
-    height, width, channels = image.shape
-    index_ = []
+    if image is None:
+        raise ValueError(f"无法读取图像文件: {target_path}")
+        
+    height, width, _ = image.shape
+    index_list = []
+    
     if is_check_word:
         check_index = 0
-        ans = comm_ocr(path=target_path,name=name,uuid=uuid,table_engine=table_engine)
-        for i in range(len(ans)):
-            res_=ans[i]['txt_result']
-            # if  res_.find("种")!=-1 or res_.find('记录')!=-1 or res_.find("带电")!=-1 or  res_.find("附页") != -1:
-            if res_ in key_word:
+        ans = _exec_comm_ocr(path=target_path, name=name, uuid=uuid, table_engine=table_engine)
+        
+        for i, item in enumerate(ans):
+            if item['txt_result'] in key_words:
                 check_index = i
                 break
-        #判断是否在这个表格框里。
-        tmp = ans[check_index]['coordinates']
-        if int(tmp[0][0])>height/2:
+                
+        # 保护机制：如果匹配词太靠下（超出行高一半），视为无效或次要表头，从头切分
+        tmp_coord = ans[check_index]['coordinates']
+        if int(tmp_coord[0][0]) > height / 2:
             check_index = 0
-        for i in range(check_index,len(ans)):
-            index_.append(ans[i]['coordinates'])
+            
+        index_list.extend([item['coordinates'] for item in ans[check_index:]])
     else:
-        ans = table_engine.ocr(target_path,rec=False)
-        coordinates = ans[0]
-        for i in coordinates:
-            integer_list = [[int(num) for num in sublist] for sublist in i]
-            index_.append(integer_list)
-    #左，右，上，下
-    rectangle = spul.expand_coordinates(spul.calculate_bounding_box(index_),width,height,30,120,30,80)
+        # 直接使用文本块检测网络 (DBNet) 识别轮廓，不走识别网络，速度极快
+        ans = table_engine.ocr(target_path, rec=False)
+        if ans and ans[0]:
+            coordinates = ans[0]
+            index_list = [[[int(num) for num in point] for point in block] for block in coordinates]
+        
+    # 计算最小包围盒并向外扩张留白区 (Bounding Box Expansion)
+    rectangle = geut.expand_coordinates(
+        geut.calculate_bounding_box(index_list), 
+        width, height, 
+        30, 120, 30, 80
+    )
+    
     x1, y1 = map(int, rectangle[0])
     x2, y2 = map(int, rectangle[1])
+    
+    # OpenCV 裁剪图像：切片区域 [Y_start:Y_end, X_start:X_end]
     roi = image[y1:y2, x1:x2]
-    image_name = root_dir+"/"+FileConfig.cv_intelligence_img
-    cv2.imwrite(image_name,roi)
-    # route = adp_ru.adapter_key(ans,target_path,root_dir)
-    # save_compress=fiul.uuid_save_compress_img(uuid)
-    # flag_compress = cvut.get_compress(image_name,save_compress,CVConfig.cv_compress)
-    # if flag_compress:
-    #     coord,txt_result = cvut.cv_build(uuid,CVConfig.cv_compress)
-    # else:
-    #     coord,txt_result = cvut.cv_build(uuid,FileConfig.cv_intelligence_img)
-    coord,txt_result = cvut.cv_build(uuid,FileConfig.cv_intelligence_img)
-    fiul.list_one_dir(coord,coord_img_path)
+    image_name = f"{root_dir}/{FileConfig.cv_intelligence_img}"
+    cv2.imwrite(image_name, roi)
+    
+    # 结合传统的 OpenCV 连通域/霍夫曼直线识别表框
+    coord, _ = cvut.cv_build(uuid, FileConfig.cv_intelligence_img)
+    
+    # 将切片存入结果队列
+    fiul.list_one_dir(coord, coord_img_path)
+    
     return name
