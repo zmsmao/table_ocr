@@ -1,6 +1,6 @@
 import utils.common_util as comm
 import utils.file_util as fiut
-import utils.image_util as imut
+import utils.cv_util as cvut
 import json
 from domain.ocr_rules_result import OCRRulesHead,OCRRulesBody,OCRRulesResult
 import re
@@ -183,8 +183,8 @@ def rules(coord_img_path,table_engine,uuid,name):
         'table_head':ocr_head.head,
         'table_type': table_type,
         'table_body':{
-            'head':ocr_head.__dict__(),
-            'body':ocr_body.__dict__()
+            'head':ocr_head.__dict__,
+            'body':ocr_body.__dict__
         }
     }
     print('io/save_path/'+uuid)
@@ -270,9 +270,9 @@ def option_res(coord_img_path,img_name,table_engine,is_expand = True,is_sharpeni
     for i in range(len(coord_img_path)):
         expand_img = coord_img_path[i]
         if is_expand:
-            expand_img = imut.expand_cv_img(expand_img)
+            expand_img = cvut.expand_cv_img(expand_img)
         if is_sharpening:
-            expand_img = imut.cv_sharpening(expand_img)
+            expand_img = cvut.cv_sharpening(expand_img)
         result=table_engine.ocr(expand_img)
         lists=comm.extract_text_obj(result)
         listsr.append(lists)

@@ -21,7 +21,6 @@ from domain.ocr_result_common import OCRCommon, OCRAll
 import utils.common_util as comm
 import utils.file_util as fiul
 import utils.cv_util as cvut
-import utils.image_util as imut
 import utils.geometry_util as geut
 
 # 配置日志记录器
@@ -85,7 +84,7 @@ def com_video_img(media_type: int, uuid: str, target_dir: str) -> List[str]:
         target = target_dir
         
         # 压缩验证
-        if imut.get_compress(target, save_compress, CVConfig.cv_compress):
+        if cvut.get_compress(target, save_compress, CVConfig.cv_compress):
             target = save_compress
             
         result = engine.ocr(target, rec=True)
@@ -97,7 +96,7 @@ def com_video_img(media_type: int, uuid: str, target_dir: str) -> List[str]:
         # 处理视频类型
         logger.debug(f"[Task={uuid}] 提取视频帧并执行批处理...")
         frame = fiul.uuid_save_mkdir_video_frame(uuid)
-        img_list = imut.cv_init_video(target_dir, frame)
+        img_list = cvut.cv_init_video(target_dir, frame)
         
         list_txt_no_filter_pj = []
         list_txt_filter_pj = []
@@ -250,7 +249,7 @@ def intelligence_split(
     
     root_dir, name = _save_and_get_path(data, uuid)
     root_image = f"{root_dir}/{name}"
-    target_path = imut.cv_init_img(root_image, uuid)
+    target_path = cvut.cv_init_img(root_image, uuid)
     
     image = cv2.imread(target_path)
     if image is None:

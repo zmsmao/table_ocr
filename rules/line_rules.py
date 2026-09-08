@@ -97,5 +97,5 @@ def rules(coord_img_path,table_engine,uuid,name):
     
     build_res.ocr_body = ocr_body
     build_res.ocr_head = ocr_head
-    return build_res.__dict__()
+    return build_res.__dict__
 

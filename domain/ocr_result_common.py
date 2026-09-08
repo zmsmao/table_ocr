@@ -16,7 +16,7 @@ class OCRCommon:
     def to_dict(self) -> Dict[str, Any]:
         """
         将对象序列化为字典格式。
-        注：原代码重写了 __dict__() 方法，这在 Python 中会引发内置属性冲突，
+        注：原代码重写了 __dict__ 方法，这在 Python 中会引发内置属性冲突，
         此处统一重构为标准的 to_dict() 实例方法。
         """
         return asdict(self)
