@@ -1,242 +1,187 @@
+"""
+-------------------------------------------------
+    File Name:     file_util
+    Description:   文件读写与 uuid 目录体系
+                   每次请求一个 uuid，图片统一落在 io/save_path/{uuid} 下
+    date:          2023.08
+-------------------------------------------------
+    Change Activity: 2023.08
+-------------------------------------------------
+"""
+import base64
+import logging
 import os
 import shutil
-import base64
+
 from config.file_config import FileConfig
 
-file_config=FileConfig()
+logger = logging.getLogger(__name__)
 
-# 获取文件扩展名
+file_config = FileConfig()
+
+
 def get_extension_file(file_name):
-    file_extension = os.path.splitext(file_name)[1]
-    return file_extension
+    '''
+    取文件扩展名，包含点号，如 .jpg
+    '''
+    return os.path.splitext(file_name)[1]
+
 
 def save_image(base64_data, save_path):
-        """
-        将Base64编码的图片数据保存为图片文件
-        """
-        # 将Base64编码的图片数据解码为二进制数据
-        image_data = base64.b64decode(base64_data)
-        # 创建保存图片的文件夹
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        # 将二进制数据保存为图片文件
-        try:
-            with open(save_path, 'wb') as f:
-                f.write(image_data)
-            return True
-        except Exception as e:
-            print(e)
-            return False
-        
-
-def encode_image(file):
-    with open(file,'rb') as f:
-        img_data = f.read()
-        base64_data = base64.b64encode(img_data)
-        #print(base64_data)
-        # 如果想要在浏览器上访问base64格式图片，需要在前面加上：data:image/jpeg;base64,
-        return base64_data
-
-    
-def extract_first_element(data):
-    result = ""
-    for item in data:
-        if len(item) > 0:
-            result += str(item[0])+"  "+str(item[1]) + "\n"
-    return result
-
-def dir_delete(dir):
-    if os.path.isdir(dir):
-        files=os.listdir(dir)
-        os.chdir(dir)#进入指定目录
-        # #删除目录下的文件
-        # for file in files:
-        #     os.remove(file)
-        #     # print(file,"删除成功")
-        os.chdir("..")#切换到外部目录
-        shutil.rmtree(dir)
-        print(dir,"删除成功")
-
-def list_dir(dir_path):
     '''
-        通过 listdir 得到的是仅当前路径下的文件名，不包括子目录中的文件，如果需要得到所有文件需要递归
+    把 base64 图片数据落盘。
     '''
-    res=[]
-    for i in os.listdir(dir_path):
-        file_path = os.path.join(dir_path, i)
-        if os.path.isdir(file_path):
-            res.append(file_path)
-    return res
-def listdir(path, coord_img_path):  # 传入存储的list
-    for file in os.listdir(path):
-        file_path = os.path.join(path, file)
-        if os.path.isdir(file_path):
-            listdir(file_path, coord_img_path)
-        else:
-            coord_img_path.append(file_path)
-            
-def list_one_dir(path, coord_img_path):  # 传入存储的list
-    for file in os.listdir(path):
-        file_path = os.path.join(path, file)
-        if os.path.isdir(file_path):
-            continue
-        else:
-            coord_img_path.append(file_path)
-            
-def get_file_name(coord_img_path):
-    img_name=[]
-    for name in coord_img_path:
-        filename = os.path.basename(name)
-        s=filename.split('.')[0]
-        img_name.append(s)
-    return img_name
-
-def sort_file_path(coord_img_path):
-    res = []
-    for i in coord_img_path:
-        filename = os.path.basename(i)
-        s=filename.split('.')[0].split('_')[0]
-        res.append((int(s),i))
-    tmp=[]
-    res = sorted(res,key=lambda x:x[0])
-    for i in  res:
-        tmp.append(i[1])
-    return tmp
-    
-
-def uuid_save_mkdirs(path,uuid):
-    root=path+"/"+file_config.save_path+"/"+uuid
-    coord=root+"/"+file_config.coord
-    main=root+"/"+file_config.main
-    other=root+"/"+file_config.other
-    txt_result=root+"/"+file_config.txt_result
-    os.makedirs(root, exist_ok=True)
-    os.makedirs(coord, exist_ok=True)
-    os.makedirs(main, exist_ok=True)
-    os.makedirs(other, exist_ok=True)
-    os.makedirs(txt_result, exist_ok=True)
-    return root,coord,main,other,txt_result
-
-def uuid_save_mkdirs(uuid):
-    root=uuid_save_root(uuid)
-    coord=root+"/"+file_config.coord
-    main=root+"/"+file_config.main
-    other=root+"/"+file_config.other
-    txt_result=root+"/"+file_config.txt_result
-    os.makedirs(coord, exist_ok=True)
-    os.makedirs(main, exist_ok=True)
-    os.makedirs(other, exist_ok=True)
-    os.makedirs(txt_result, exist_ok=True)
-    return root,coord,main,other,txt_result
-
-def uuid_save_video_img(uuid,suffix):
-    root=uuid_save_root(uuid)+"/"
-    di=root+file_config.cv_video_img_name+suffix
-    os.makedirs(os.path.dirname(root), exist_ok=True)
-    return di
-
-def uuid_save_mkdir_video_frame(uuid):
-    root=uuid_save_root(uuid)
-    frame=root+"/"+file_config.frame
-    os.makedirs(frame, exist_ok=True)
-    return frame
-
-def uuid_save_web_file(file,uuid):
-    suffix=get_extension_file(file_name=file.filename)
-    di = uuid_save_video_img(uuid,suffix)
-    file.save(di)
-    return di
-
-def uuid_save_img(uuid,name):
-    root=uuid_save_root(uuid)+"/"+name
-    return root
-
-def uuid_save_root(uuid):
-    path=parent_path()
-    root=path+"/"+file_config.save_path+"/"+uuid
-    os.makedirs(root, exist_ok=True)
-    return root
-
-def uuid_cache_root(uuid):
-    path=parent_path()
-    root=path+"/"+file_config.img_cache+"/"+uuid
-    return root
-
-def uuid_cache_img(uuid):
-    root=uuid_cache_root(uuid)+"/"
-    di=root+file_config.cv_img
-    os.makedirs(os.path.dirname(root), exist_ok=True)
-    return di
-
-def uuid_cache_split(uuid,name):
-    root=uuid_cache_root(uuid)
-    root=root+'/'+name
-    os.makedirs(root,exist_ok=True)
-    return root
-
-def uuid_cache_write(uuid):
-    root=uuid_cache_root(uuid)
-    root=root+'/'+file_config.split_write
-    os.makedirs(root,exist_ok=True)
-    return root
-
-def uuid_cache_spilt_path(uuid,name):
-    root=uuid_cache_split(uuid,name)
-    root=root+'/'+file_config.split_path
-    os.makedirs(root,exist_ok=True)
-    return root
-
-def uuid_cache_split_write(uuid,name):
-    root=uuid_cache_split(uuid,name)
-    root=root+'/'+file_config.split_write
-    os.makedirs(root,exist_ok=True)
-    return root
-
-def uuid_save_rotate_img(uuid):
-    root=uuid_save_root(uuid)+"/"
-    di=root+file_config.cv_rotate_img
-    os.makedirs(os.path.dirname(root), exist_ok=True)
-    return di
-
-def uuid_save_compress_img(uuid):
-    root=uuid_save_root(uuid)+"/"
-    di=root+file_config.cv_compress_img
-    os.makedirs(os.path.dirname(root), exist_ok=True)
-    return di
-
-def uuid_save_draw_rect_img(uuid):
-    root=uuid_save_root(uuid)+"/"
-    di=root+file_config.cv_draw_max_rect
-    os.makedirs(os.path.dirname(root), exist_ok=True)
-    return di
-
-def uuid_save_transform_img(uuid):
-    root=uuid_save_root(uuid)+"/"
-    di=root+file_config.cv_transform_img
-    os.makedirs(os.path.dirname(root), exist_ok=True)
-    return di
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    try:
+        with open(save_path, 'wb') as f:
+            f.write(base64.b64decode(base64_data))
+        return True
+    except Exception as e:
+        logger.error('保存图片失败 %s: %s', save_path, e)
+        return False
 
 
-def uuid_save_line_img(uuid):
-    root=uuid_save_root(uuid)+"/"
-    di=root+file_config.cv_border_lines_img
-    os.makedirs(os.path.dirname(root), exist_ok=True)
-    return di
-
-
-def write_result(result_text,output_path):
+def write_result(result_text, output_path):
+    '''
+    把识别结果写成 txt，便于排查。
+    '''
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(result_text)
 
-    
-def current_path():
-    s=os.path.abspath(__file__)
-    return s
 
-def parent_path ():
-    s=os.path.dirname(os.path.dirname(current_path()))
-    return s
+def dir_delete(dir_path):
+    '''
+    删除目录及其内容。目录不存在时静默返回。
+    '''
+    if not os.path.isdir(dir_path):
+        return
+    try:
+        shutil.rmtree(dir_path)
+    except OSError as e:
+        logger.error('删除目录失败 %s: %s', dir_path, e)
+
+
+def list_one_dir(path, coord_img_path):
+    '''
+    把 path 下的文件（不含子目录）追加进 coord_img_path。
+    '''
+    for file in os.listdir(path):
+        file_path = os.path.join(path, file)
+        if not os.path.isdir(file_path):
+            coord_img_path.append(file_path)
+
+
+def get_file_name(coord_img_path):
+    '''
+    取文件名列表（不含扩展名）。
+    '''
+    return [os.path.basename(name).split('.')[0] for name in coord_img_path]
+
 
 def get_one_name(path):
-    filename = os.path.basename(path)
-    s=filename.split('.')[0]
-    return s
+    '''
+    取单个文件名（不含扩展名）。
+    '''
+    return os.path.basename(path).split('.')[0]
+
+
+def sort_file_path(coord_img_path):
+    '''
+    按切图文件名的第一段（y 坐标）升序排序，保证从上往下处理。
+    '''
+    res = [(int(os.path.basename(i).split('.')[0].split('_')[0]), i) for i in coord_img_path]
+    return [item[1] for item in sorted(res, key=lambda x: x[0])]
+
+
+def current_path():
+    '''
+    当前文件绝对路径。
+    '''
+    return os.path.abspath(__file__)
+
+
+def parent_path():
+    '''
+    项目根目录。utils 位于根目录下，因此取上两级目录。
+    '''
+    return os.path.dirname(os.path.dirname(current_path()))
+
+
+def uuid_save_root(uuid):
+    '''
+    io/save_path/{uuid}
+    '''
+    root = parent_path() + "/" + file_config.save_path + "/" + uuid
+    os.makedirs(root, exist_ok=True)
+    return root
+
+
+def uuid_cache_root(uuid):
+    '''
+    cache/{uuid}
+    '''
+    return parent_path() + "/" + file_config.img_cache + "/" + uuid
+
+
+def uuid_save_mkdirs(uuid):
+    '''
+    建好本次请求需要的全部子目录，返回 (root, coord, main, other, txt_result)。
+    '''
+    root = uuid_save_root(uuid)
+    coord = root + "/" + file_config.coord
+    main = root + "/" + file_config.main
+    other = root + "/" + file_config.other
+    txt_result = root + "/" + file_config.txt_result
+    for path in (coord, main, other, txt_result):
+        os.makedirs(path, exist_ok=True)
+    return root, coord, main, other, txt_result
+
+
+def uuid_save_mkdir_video_frame(uuid):
+    '''
+    视频抽帧存放目录。
+    '''
+    frame = uuid_save_root(uuid) + "/" + file_config.frame
+    os.makedirs(frame, exist_ok=True)
+    return frame
+
+
+def uuid_save_video_img(uuid, suffix):
+    '''
+    上传的视频/图片落盘路径。
+    '''
+    root = uuid_save_root(uuid) + "/"
+    di = root + file_config.cv_video_img_name + suffix
+    os.makedirs(os.path.dirname(root), exist_ok=True)
+    return di
+
+
+def uuid_save_web_file(file, uuid):
+    '''
+    保存前端上传的文件，返回落盘路径。
+    '''
+    suffix = get_extension_file(file_name=file.filename)
+    di = uuid_save_video_img(uuid, suffix)
+    file.save(di)
+    return di
+
+
+def uuid_save_rotate_img(uuid):
+    '''
+    倾斜矫正后的图片路径。
+    '''
+    return uuid_save_root(uuid) + "/" + file_config.cv_rotate_img
+
+
+def uuid_save_compress_img(uuid):
+    '''
+    压缩后的图片路径。
+    '''
+    return uuid_save_root(uuid) + "/" + file_config.cv_compress_img
+
+
+def uuid_save_transform_img(uuid):
+    '''
+    透视变换后的图片路径。
+    '''
+    return uuid_save_root(uuid) + "/" + file_config.cv_transform_img

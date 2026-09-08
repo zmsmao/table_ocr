@@ -1,765 +1,330 @@
-import cv2
-from config.cv_config import CVConfig
-import utils.file_util as fiul 
-import numpy as np
+"""
+-------------------------------------------------
+    File Name:     cv_util
+    Description:   表格线检测与单元格切分
+                   输入一张表格图，输出切好的单元格图片（文件名携带坐标）
+    date:          2023.08
+-------------------------------------------------
+    Change Activity: 2023.08
+-------------------------------------------------
+"""
 import collections
-import math
+import logging
 import os
+from typing import NamedTuple
 
-def analyze_data(data):
-    data_ = [x for x in data if x != 0]
-    data_not = [x for x in data if x == 0]
-    if  len(data_not)>len(data_)*2:
-        return 0.0
-    data = data_
-    # 区分正负两部分
-    positive = [x for x in data if x > 0]
-    negative = [x for x in data if x < 0]
-    # 选择数据量较多部分
-    if len(positive) > len(negative):
-        selected_data = positive
-    else:
-        selected_data = negative
-    selected_data = list(map(float, selected_data))
-        
-    # 计算统计量      
-    median = np.median(selected_data)
-    return median
+import cv2
+import numpy as np
 
-def rotate(image,angle,center=None,scale=1.0):
-    (w,h) = image.shape[0:2]
-    if center is None:
-        center = (w//2,h//2)   
-    wrapMat = cv2.getRotationMatrix2D(center,angle,scale)    
-    return cv2.warpAffine(image,wrapMat,(h,w))
+from config.cv_config import CVConfig
+import utils.file_util as fiul
+import utils.image_util as imut
+from utils.geometry_util import is_inside
 
-def is_inside(src, dst):
-    src_x = [p[0] for p in src]
-    src_y = [p[1] for p in src]
+logger = logging.getLogger(__name__)
 
-    dst_x = [p[0] for p in dst]
-    dst_y = [p[1] for p in dst]
+# 次大表格区域面积占主表格的比例超过此值，才认为主表格被切碎并告警
+FRAME_SPLIT_RATIO = 0.2
 
-    return (max(dst_x) <= max(src_x) and min(dst_x) >= min(src_x) and
-            max(dst_y) <= max(src_y) and min(dst_y) >= min(src_y))
-    
-def rm_list(x_y_list,x_y_remove):
-    x_y_result=[]
-    for k in range(len(x_y_list)):
-        if k not in x_y_remove:
-            x_y_result.append(x_y_list[k])
-    return x_y_result
 
-#灰度化
-def cv_gray(root,name):
-    image = cv2.imread(root+"/"+name)
-    # 裁剪图片
-    if CVConfig.cv_is_split:
-        height, width, channels = image.shape
-        roi=image[CVConfig.cv_y_head_split:height-CVConfig.cv_y_end_split
-                    ,CVConfig.cv_x_right_split:width-CVConfig.cv_x_left_split]
-        cv2.imwrite(root+"/"+name,roi)
-        img=cv2.imread(root+"/"+name,1)
-        image=img
-    #灰度图片
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    return gray,image
+class Cell(NamedTuple):
+    '''
+    单元格。字段顺序与旧的六元组一致，仍可用下标访问。
 
-def cv_gray_path(path):
-    image = cv2.imread(path, 1)
-    #灰度图片
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    return gray,image
+    points 是四点坐标，顺序为 左上、左下、右上、右下。
+    is_frame 为 True 表示这是整张表格的外框，不是真正的单元格，切图时会被丢弃。
+    '''
+    area: int
+    x1: int
+    points: list
+    xw: int
+    y1: int
+    yh: int
+    is_frame: bool = False
 
-#二值化
-def cv_adaptiveThreshold(gray):
-    binary = cv2.adaptiveThreshold(~gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY,35, -7)
-    return binary
 
-#识别横竖线
-def cv_x_y(other,binary,x_eroded=1,y_eroded=1):
-    rows,cols=binary.shape
+def rm_list(x_y_list, x_y_remove):
+    '''
+    按下标剔除元素。x_y_remove 传 set 才能避免 O(n*m) 的成员判断。
+    '''
+    return [item for k, item in enumerate(x_y_list) if k not in x_y_remove]
+
+
+def cv_x_y(other, binary, x_eroded=1, y_eroded=1):
+    '''
+    用形态学分别提取横线与竖线。
+    中间结果会存到 other 目录下（cvX.jpg / cvY.jpg），排查切分问题时很有用。
+    '''
+    rows, cols = binary.shape
     scale = 40
-    #识别横线
-    kernel  = cv2.getStructuringElement(cv2.MORPH_RECT,(cols//scale,1))
-    eroded = cv2.erode(binary,kernel,iterations = y_eroded)
-    dilatedcol = cv2.dilate(eroded,kernel,iterations = 1)
-    cv2.imwrite(other+"cvX.jpg",dilatedcol)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(cols // scale, 1), 1))
+    eroded = cv2.erode(binary, kernel, iterations=y_eroded)
+    dilatedcol = cv2.dilate(eroded, kernel, iterations=1)
+    cv2.imwrite(os.path.join(other, "cvX.jpg"), dilatedcol)
 
-    scale = 40
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(1,rows//scale))
-    eroded = cv2.erode(binary,kernel,iterations = x_eroded)
-    dilatedrow = cv2.dilate(eroded,kernel,iterations = 1)
-    cv2.imwrite(other+"cvY.jpg",dilatedrow)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(rows // scale, 1)))
+    eroded = cv2.erode(binary, kernel, iterations=x_eroded)
+    dilatedrow = cv2.dilate(eroded, kernel, iterations=1)
+    cv2.imwrite(os.path.join(other, "cvY.jpg"), dilatedrow)
 
-    return dilatedcol,dilatedrow
+    return dilatedcol, dilatedrow
 
-#识别表格
-def cv_table(other,dilatedcol,dilatedrow):
-    #标识交点
-    bitwiseAnd = cv2.bitwise_and(dilatedcol,dilatedrow)
-    cv2.imwrite(other+CVConfig.cv_point,bitwiseAnd) #将二值像素点生成图片保存
-    #标识表格
-    merge = cv2.add(dilatedcol,dilatedrow)
-    # cv2.imshow("表格整体展示：",merge)
-    # cv2.waitKey(0)
-    table_path = other+CVConfig.cv_table
-    cv2.imwrite(table_path,merge)
-    return merge,table_path
 
-def cv_core(merge,table_path):
-    # 对二值化图像进行轮廓检测，得到每一个表格的轮廓
-    kernel = np.ones((2,2),np.uint8)
-    merge = cv2.dilate(merge,kernel,iterations=1)
-    # merge = cv2.GaussianBlur(merge, (1,1), 0)
-    # cv2.imshow("ks",merge)
-    # cv2.waitKey()
-    # cv_draw_max_rect(table_path)
-    contours, _ = cv2.findContours(merge, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    # 得到原始过滤坐标
-    list_result=[]
-    # 统一化x,y
-    x_set=[]
-    y_set=[]
-    x_set.append(0)
-    y_set.append(0)
-    # 记录x，y坐标
-    x_result=[]
-    y_result=[]
-    # 过滤坐标
-    x_y_set=set()
-    # 排序过滤之后的最终坐标
-    x_y_list=[]
-    for contour in contours:
+def cv_table(other, dilatedcol, dilatedrow):
+    '''
+    合并横竖线得到表格骨架，并输出交点图便于排查。
+    '''
+    bitwise_and = cv2.bitwise_and(dilatedcol, dilatedrow)
+    cv2.imwrite(other + CVConfig.cv_point, bitwise_and)
+    merge = cv2.add(dilatedcol, dilatedrow)
+    cv2.imwrite(other + CVConfig.cv_table, merge)
+    return merge
+
+
+def cv_core(merge):
+    '''
+    从表格骨架中提取单元格。
+
+    用 findContours 的层级信息区分三种轮廓：
+        顶层（parent = -1）   -> 整表外框
+        顶层直接子轮廓        -> 单元格
+        更深层（洞中岛）      -> 噪点，丢弃
+
+    返回按面积倒序的 Cell 列表：识别到外框时它固定在第 0 位且 is_frame=True，
+    真正要切图的单元格在其后。识别不到外框时列表里全是单元格，不会误吞格子。
+
+    顶层轮廓多于一个说明表格线断裂，只保留面积最大的那块，并打 warning。
+    '''
+    kernel = np.ones((2, 2), np.uint8)
+    merge = cv2.dilate(merge, kernel, iterations=1)
+    found = cv2.findContours(merge, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    # OpenCV 3.x 返回 (image, contours, hierarchy)，4.x 返回 (contours, hierarchy)
+    contours, hierarchy = found[-2], found[-1]
+    hierarchy = hierarchy[0] if hierarchy is not None and len(hierarchy) else []
+
+    frames = []
+    cells = []
+    # 统一化 x/y：差值在容差内视为同一条线。不要预置 0，
+    # 否则靠近原点的真实边界会被吸附到 0，引入整体偏移。
+    x_set = []
+    y_set = []
+    # 外框与最外圈格子的边界常常完全重合（容差 8 通常大于线宽），
+    # 共用一套去重会导致格子被当成外框的重复项吃掉，所以分开记。
+    frame_seen = set()
+    cell_seen = set()
+
+    for index, contour in enumerate(contours):
         x, y, w, h = cv2.boundingRect(contour)
-        i=h*w
-        # 过滤像素过小的图像
-        temp_index = 0
-        x1=0 
-        y1=0
-        xw=0
-        yh=0
-        x1=x
-        for index in range(len(x_set)):
-            if abs(x-x_set[index])<=CVConfig.pixel_fault_tolerance:
-                temp_index=index
-                x1=x_set[index]
-        if temp_index==0 :
-            x_set.append(x)
-        temp_index=0 
-        xw=x+w
-        for index in range(len(x_set)):
-            if abs(xw-x_set[index])<=CVConfig.pixel_fault_tolerance:
-                temp_index=index
-                xw=x_set[index]
-        if temp_index==0 :
-            x_set.append(xw)
-        temp_index=0
-            
-        y1=y
-        for index in range(len(y_set)):
-            if abs(y1-y_set[index])<=CVConfig.pixel_fault_tolerance:
-                temp_index=index
-                y1=y_set[index]
-        if temp_index==0 :
-            y_set.append(y1)
-        temp_index=0
-        yh=y+h
-        for index in range(len(y_set)):
-            if abs(yh-y_set[index])<=CVConfig.pixel_fault_tolerance:
-                temp_index=index
-                yh=y_set[index]
-        if temp_index==0 :
-            y_set.append(yh)
-        temp_index=0
-        # 构建坐标
-        temp=[(x1,y1),(x1,yh),(xw,y1),(xw,yh)]
-        # 构建set可识别的坐标
-        temp_boo=(x1,y1,xw,yh)
-        if  temp_boo not in x_y_set:
-            i=abs(y1-yh)*abs(x1-xw)
-            if i>CVConfig.min_size:
-                x_y_set.add(temp_boo)
-                # 构建可排序的坐标
-                x_y_list.append((i,x1,temp,xw,y1,yh))
-                list_result.append(temp)
-                x_result.append(x1)
-                x_result.append(xw)
-                y_result.append(y1)
-                y_result.append(yh)
-    #统计x出现的次数
-    x_dict=collections.Counter(x_result)
-    y_dict=collections.Counter(y_result)
-    x_y_list=sorted(x_y_list,key=lambda x:(x[0],x[2][0]),reverse=True)
-    x_set=set(x_set)
-    y_set=set(y_set)
-    #统计节点
-    def new_ps(x_y_list):
-        counterls=[]
-        for i in range(len(x_y_list)):
-            number=0
-            for u in range(i+1,len(x_y_list)):
-                if is_inside(x_y_list[i][2],x_y_list[u][2]):
-                    number+=1
-            counterls.append((x_y_list[i][0],x_y_list[i][2],number))
-        return counterls
-    counterls=new_ps(x_y_list)
-    print({'counterls':counterls})
-    # 中间变量
-    x_y_remove=[]
-    x_y_list_rm=[]
-    if len(x_y_list)>1:
-        for j in range(len(x_y_list)):
-            if j==0 and counterls[0][2]>0 and counterls[1][2]==0:
+        x1 = _merge_coordinate(x, x_set)
+        xw = _merge_coordinate(x + w, x_set)
+        y1 = _merge_coordinate(y, y_set)
+        yh = _merge_coordinate(y + h, y_set)
+
+        temp = [(x1, y1), (x1, yh), (xw, y1), (xw, yh)]
+        temp_boo = (x1, y1, xw, yh)
+        area = abs(y1 - yh) * abs(x1 - xw)
+        if area <= CVConfig.min_size:
+            continue
+
+        level = _contour_level(hierarchy, index)
+        if level == 0:
+            if temp_boo in frame_seen:
                 continue
-            x1=x_dict.get(x_y_list[j][1])
-            xw=x_dict.get(x_y_list[j][3])
-            y1=y_dict.get(x_y_list[j][4])
-            yh=y_dict.get(x_y_list[j][5])
-            if (x1==1 or xw==1) and (y1==1 or yh ==1):
-                x_y_remove.append(j)
-        #散列式表单情况
-        if len(x_y_remove)<len(x_y_list):
-            x_y_list=rm_list(x_y_list,x_y_remove)
+            frame_seen.add(temp_boo)
+            frames.append(Cell(area, x1, temp, xw, y1, yh))
+        elif level == 1:
+            if temp_boo in cell_seen:
+                continue
+            cell_seen.add(temp_boo)
+            cells.append(Cell(area, x1, temp, xw, y1, yh))
+        # level >= 2：格子内部的小噪点，不是有效单元格
+
+    frames.sort(key=lambda c: c.area, reverse=True)
+    cells.sort(key=lambda c: (c.area, c.points[0]), reverse=True)
+    if len(frames) > 1:
+        # 页面上总会有零星线条（页眉页脚、手写笔迹），只有次大块面积达到
+        # 主表格的一定比例，才说明主表格本身被切碎了，值得告警。
+        ratio = frames[1].area / float(frames[0].area)
+        if ratio >= FRAME_SPLIT_RATIO:
+            logger.warning('表格被切成 %d 块（次大面积占比 %.0f%%），表格线可能存在断裂，'
+                           '仅保留最大的一块', len(frames), ratio * 100)
         else:
-            x_y_remove=[]
-            lens=len(x_y_list)-1
-            for u in range(0,len(x_y_list)-1):
-                if is_inside(x_y_list[u][2],x_y_list[u+1][2]):
-                    continue
-                else:
-                    lens=u
+            logger.debug('除主表格外还有 %d 块零散区域，占比 %.0f%%，忽略',
+                         len(frames) - 1, ratio * 100)
+
+    x_y_list = [frames[0]._replace(is_frame=True)] if frames else []
+    x_y_list.extend(cells)
+    if not x_y_list:
+        logger.warning('未从表格骨架中检出任何单元格')
+        return x_y_list
+
+    logger.debug('外框: %s，单元格 %d 个',
+                 x_y_list[0].points if frames else None,
+                 len(x_y_list) - (1 if frames else 0))
+
+    # 统计每条坐标线被多少个单元格引用
+    x_result = []
+    y_result = []
+    for cell in x_y_list:
+        x_result.append(cell.x1)
+        x_result.append(cell.xw)
+        y_result.append(cell.y1)
+        y_result.append(cell.yh)
+    x_dict = collections.Counter(x_result)
+    y_dict = collections.Counter(y_result)
+
+    if len(x_y_list) > 1:
+        x_y_remove = set()
+        for j, cell in enumerate(x_y_list):
+            # 外框本来就是包住所有格子的，不参与"孤线"判定
+            if cell.is_frame:
+                continue
+            x1 = x_dict.get(cell.x1)
+            xw = x_dict.get(cell.xw)
+            y1 = y_dict.get(cell.y1)
+            yh = y_dict.get(cell.yh)
+            # 只被引用一次的边界线，说明是误检出来的孤立格
+            if (x1 == 1 or xw == 1) and (y1 == 1 or yh == 1):
+                x_y_remove.add(j)
+
+        cell_count = len(x_y_list) - (1 if frames else 0)
+        if len(x_y_remove) < cell_count:
+            x_y_list = rm_list(x_y_list, x_y_remove)
+        else:
+            # 散列式表单：只保留第一个能包住其它格子的外框。
+            # 全程嵌套时兜底取第 0 个（最大的），原实现取的是最后一个（最小的）。
+            lens = 0
+            for u in range(0, len(x_y_list) - 1):
+                if not is_inside(x_y_list[u].points, x_y_list[u + 1].points):
+                    lens = u
                     break
             x_y_list = [x_y_list[lens]]
-        # 计算小表格是否在主表格里或者是已存在于原表格
-        if len(x_y_list)>1:
-            x_y_remove=[]
-            for j in range(len(x_y_list)):
-                if is_inside(x_y_list[0][2],x_y_list[j][2]):
-                    continue
-                else:
-                    x_y_remove.append(j)
-            x_y_list=rm_list(x_y_list,x_y_remove)
-        
-        # # 二次过滤：
-        # if len(x_y_list)>1:
-        #     x_y_remove=[]
-        #     for j in range(len(x_y_list)):
-        #         x1=x_dict.get(x_y_list[j][1])
-        #         xw=x_dict.get(x_y_list[j][3])
-        #         y1=y_dict.get(x_y_list[j][4])
-        #         yh=y_dict.get(x_y_list[j][5])
-        #         if (x1==1 or xw==1) and (y1==1 or yh ==1):
-        #             x_y_remove.append(j)
-        #     x_y_list=rm_list(x_y_list,x_y_remove)
-    print({'x_y_list':x_y_list})
+
+        # 丢掉不在主表格外框内的小表格
+        if len(x_y_list) > 1:
+            x_y_remove = {j for j, cell in enumerate(x_y_list)
+                          if j > 0 and not is_inside(x_y_list[0].points, cell.points)}
+            x_y_list = rm_list(x_y_list, x_y_remove)
+
+    logger.debug('x_y_list: %s', [(c.area, c.points[0], c.points[3], c.is_frame) for c in x_y_list])
     return x_y_list
 
 
-def get_correct(path,save_path):
-    gray,image = cv_gray_path(path)
-    #腐蚀、膨胀
-    kernel = np.ones((5,5),np.uint8)
-    erode_Img = cv2.erode(gray,kernel)
-    eroDil = cv2.dilate(erode_Img,kernel)
-    # showAndWaitKey("eroDil",eroDil)
-    #边缘检测
-    canny = cv2.Canny(eroDil,50,150)
-    # showAndWaitKey("canny",canny)
-    #霍夫变换得到线条
-    lines = cv2.HoughLinesP(canny, 0.8, np.pi / 180, 90,minLineLength=100,maxLineGap=10)
-    #画出线条
-    ls=[]
-    for line in lines:
-        x1, y1, x2, y2 = line[0]
-        if(x1!=x2):
-            k = float((y1-y2)/(x1-x2))
-            ls.append(k)
-    # 斜率
-    """
-    计算角度,因为x轴向右，y轴向下，所有计算的斜率是常规下斜率的相反数，我们就用这个斜率（旋转角度）进行旋转
-    """
-    median=analyze_data(ls)
-    if median!=0.0:
-        k = median
-        angle = np.degrees(math.atan(k))
-        print('旋转的角度为：'+str(angle))
-        """
-        旋转角度大于0，则逆时针旋转，否则顺时针旋转
-        """
-        rotateImg = rotate(image,angle)
-        cv2.imwrite(save_path,rotateImg)
-        return True
-    return False
-        
-def cv_end_save(x_y_list,image,coord,main):
-    cv_spilt_save(x_y_list,image,coord)
-    x_y_list=sorted(x_y_list,key=lambda x:x[2][0][1])
-    x, y, w, h = cv2.boundingRect(np.array(x_y_list[0][2]))
-    if y<=20:
-        for i in range(1,len(x_y_list)):
-            x, y, w, h = cv2.boundingRect(np.array(x_y_list[i][2]))
-            if y>=20:
+def _contour_level(hierarchy, index):
+    '''
+    返回轮廓层级：0=顶层外框，1=外框内的单元格，2=更深的噪点。
+    拿不到层级信息时按 1 处理，宁可多留也不要误删。
+    '''
+    if index >= len(hierarchy):
+        return 1
+    parent = int(hierarchy[index][3])
+    if parent < 0:
+        return 0
+    if parent >= len(hierarchy):
+        return 1
+    return 1 if int(hierarchy[parent][3]) < 0 else 2
+
+
+def _merge_coordinate(value, exist_set):
+    '''
+    若 value 与已有坐标线差值在容差内，则复用已有值，否则登记为新坐标线。
+    有多条线都在容差内时取最后一条（与原实现保持一致，通常是更接近的那条）。
+    '''
+    merged = None
+    for item in exist_set:
+        if abs(value - item) <= CVConfig.pixel_fault_tolerance:
+            merged = item
+    if merged is not None:
+        return merged
+    exist_set.append(value)
+    return value
+
+
+def cv_spilt_save(x_y_list, image, path):
+    '''
+    把每个单元格裁成小图存到 path 目录。
+
+    外框（is_frame=True）不是单元格，会被丢掉——整表图在 main 目录已经存过。
+    识别不到外框时列表里全是单元格，此时一个都不会少。
+    '''
+    cells = [c for c in x_y_list if not c.is_frame]
+    if not cells:
+        # 一个格子都没切出来时，退化成把最大的矩形存下来
+        cells = x_y_list[:1]
+    for cell in cells:
+        xt = cell.points[0][0]
+        yt = cell.points[0][1]
+        xwt = cell.points[3][0]
+        yht = cell.points[3][1]
+        x, y, w, h = cv2.boundingRect(np.array(cell.points))
+        roi = image[y:y + h, x:x + w]
+        if h * w > CVConfig.min_size:
+            cv2.imwrite(path + '/' + '%s_%s_%s_%s_%s_coordinate.jpg'
+                        % (yt, yht, xt, xwt, h * w), roi)
+
+
+def cv_end_save(x_y_list, image, coord, main):
+    '''
+    保存整表外框、表头，并把外框以外的区域存成对照图。
+
+    文件名格式：y_yh_x_xw_面积_后缀.jpg，后缀为 head / coordinate / main。
+    '''
+    cv_spilt_save(x_y_list, image, coord)
+    if not x_y_list:
+        return
+
+    height, width = image.shape[0:2]
+    # [MODIFIED] 动态计算顶部容差，代替固定的 20 像素，防止不同分辨率下误切
+    y_threshold = max(20, int(height * 0.02))
+
+    cells = [c for c in x_y_list if not c.is_frame] or x_y_list
+    cells = sorted(cells, key=lambda c: c.points[0][1])
+    x, y, w, h = cv2.boundingRect(np.array(cells[0].points))
+    if y <= y_threshold:
+        # 顶部有细长条（或残留的外框）时向下找第一行真正的单元格；
+        # 全都贴顶就回到第一行，不能停在最后一行。
+        for cell in cells[1:]:
+            x, y, w, h = cv2.boundingRect(np.array(cell.points))
+            if y >= y_threshold:
                 break
-    roi = image[y:y+h, x:x+w]
-    cv2.imwrite(main+'/'+"_"+
-                    str(y)+"_"+str(y+h)+"_"+
-                    str(x)+"_"+str(x+w)+"_main.jpg",roi)
-    # 创建一个与原始图像大小相同的掩膜
+        else:
+            x, y, w, h = cv2.boundingRect(np.array(cells[0].points))
+
+    roi = image[y:y + h, x:x + w]
+    cv2.imwrite(main + '/_' + '%s_%s_%s_%s_main.jpg' % (y, y + h, x, x + w), roi)
+
     mask = np.zeros_like(image)
-    # 在掩膜上绘制矩形
     cv2.rectangle(mask, (x, y), (x + w, y + h), (255, 255, 255), -1)
-    # 对掩膜进行反转
-    mask = cv2.bitwise_not(mask)
-    # 获取除给定坐标以外的图像
-    roi_not = cv2.bitwise_and(image, mask)
-    cv2.imwrite(main+'/'+"_other_coordinate_not.jpg",roi_not)
+    roi_not = cv2.bitwise_and(image, cv2.bitwise_not(mask))
+    cv2.imwrite(main + '/_other_coordinate_not.jpg', roi_not)
 
-    height, width, channels = image.shape
-    if y>0:
-        roiH=image[0:y,0:width]
-        i=(y-0)*width
-        if i>CVConfig.min_size/2:
-            cv2.imwrite(coord+'/'+
-                            str(0)+"_"+str(y)+"_"+
-                            str(x)+"_"+str(x+w)+"_"+str(i)+"_head.jpg",roiH)
-    # if (height-y-h)>0:
-    #     roiE=image[y+h:height,0:width]
-    #     i=(height-y-h)*width
-    #     if i>CVConfig.min_size/2:
-    #         cv2.imwrite(coord+'/'+
-    #                         str(y+h)+"_"+str(height)+"_"+
-    #                         str(x)+"_"+str(x+w)+"_"+str(i)+"_end.jpg",roiE)
+    # 外框以上的部分视为表头
+    if y > 0 and (y - 0) * width > CVConfig.min_size / 2:
+        roi_h = image[0:y, 0:width]
+        cv2.imwrite(coord + '/' + '%s_%s_%s_%s_%s_head.jpg'
+                    % (0, y, x, x + w, y * width), roi_h)
 
 
-def cv_spilt_save(x_y_list,image,path):
-    if len(x_y_list)==0:
-        print()
-    elif len(x_y_list)==1:
-        x, y, w, h = cv2.boundingRect(np.array(x_y_list[0][2]))
-        roi = image[y:y+h, x:x+w]
-        i=h*w
-        cv2.imwrite(path+'/'+
-                    str(y)+"_"+str(y+h)+"_"+
-                    str(x)+"_"+str(x+w)+"_"+str(i)+"_coordinate.jpg",roi)
-    else:
-        for j in range(1,len(x_y_list)):
-            xt=x_y_list[j][2][0][0]
-            yt=x_y_list[j][2][0][1]
-            xwt=x_y_list[j][2][3][0]
-            yht=x_y_list[j][2][3][1]
-            x, y, w, h = cv2.boundingRect(np.array(x_y_list[j][2]))
-            roi = image[y:y+h, x:x+w]
-            i=h*w
-            if i>CVConfig.min_size:
-                cv2.imwrite(path+'/'+
-                                str(yt)+"_"+str(yht)+"_"+
-                                str(xt)+"_"+str(xwt)+"_"+str(i)+"_coordinate.jpg",roi)
-
-def cache_save_cv_gray(cache,path):
-    gray,image=cv_gray_path(path)
-    cv2.imwrite(cache,gray)
-    img=cv2.imread(cache,1)
-    return img
-        
-
-def cv_build(uuid,name):
-    root,coord,main,other,txt_result=fiul.uuid_save_mkdirs(uuid)
-    save_rotate=fiul.uuid_save_rotate_img(uuid)
-    target_path = root+"/"+name
-    #初始化
-    # cv_draw_max_rect(target_path)
-    target_path = cv_init_img(target_path,uuid)
-    #调整图片
-    flag_rotate = get_correct(target_path,save_rotate)
-    if flag_rotate:
+def cv_build(uuid, name):
+    '''
+    表格切分主入口：预处理 -> 灰度二值 -> 提取表格线 -> 切格保存。
+    返回 (切图目录, 识别结果目录)。
+    '''
+    root, coord, main, other, txt_result = fiul.uuid_save_mkdirs(uuid)
+    save_rotate = fiul.uuid_save_rotate_img(uuid)
+    target_path = root + "/" + name
+    # 压缩 + 透视矫正
+    target_path = imut.cv_init_img(target_path, uuid)
+    # 倾斜矫正
+    if imut.get_correct(target_path, save_rotate):
         target_path = save_rotate
-    #获取灰度图片
-    gray,image = cv_gray_path(target_path)
-    binary=cv_adaptiveThreshold(gray)
-    #获取轮廓线
-    dilatedcol,dilatedrow=cv_x_y(other,binary)
-    #绘制表格
-    merge,table_path=cv_table(other,dilatedcol,dilatedrow)
-    #分隔表格和根据容错率优化， 得到每一个表格的轮廓
-    x_y_list=cv_core(merge,table_path)
-    # #清空表格线
-    # image = clear_border_lines(image,contours,save_line)
-    #分隔图片
-    cv_end_save(x_y_list,image,coord,main)
-    return coord,txt_result
-
-
-def cv_two_split_build(uuid,path,x_e=10,y_e=1):
-    pp=fiul.uuid_cache_root(uuid)
-    img_name=fiul.get_one_name(path)
-    split=fiul.uuid_cache_spilt_path(uuid,img_name)
-    wirte =fiul. uuid_cache_split_write(uuid,img_name)
-    image=cv2.imread(path,1)
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    binary=cv_adaptiveThreshold(gray)
-    dilatedcol,dilatedrow=cv_x_y(pp+"/",binary,x_eroded=x_e,y_eroded=y_e)
-    x_set=[0]
-    ys,xs=np.where(dilatedrow>0)
-    for i in xs:
-        temp_index=0
-        for index in range(len(x_set)):
-            if abs(i-x_set[index])<=CVConfig.pixel_fault_tolerance:
-                temp_index=index
-        if temp_index==0 :
-                x_set.append(i)
-    x_set=sorted(list(set(x_set)))
-    x_set=x_set[1:len(x_set)-1]
-    height, width, channels = image.shape
-    roiH = image[0:height,0:x_set[0]]
-    i=height*x_set[0]
-    cv2.imwrite(split+'/'+
-                                str(0)+"_"+str(height)+"_"+
-                                str(0)+"_"+str(x_set[0])+"_"+str(i)+"_coordinate.jpg",roiH)
-    roiE = image[0:height,x_set[len(x_set)-1]:width]
-    ed=width-x_set[len(x_set)-1]
-    i=height*ed
-    cv2.imwrite(split+'/'+
-                                str(0)+"_"+str(height)+"_"+
-                                str(x_set[len(x_set)-1])+"_"+str(width)+"_"+str(i)+"_coordinate.jpg",roiE)
-    for i in range(len(x_set)-1):
-        roi = image[0:height,x_set[i]:x_set[i+1]]
-        ed=x_set[i+1]-x_set[i]
-        cv2.imwrite(split+'/'+
-                                    str(0)+"_"+str(height)+"_"+
-                                    str(x_set[i])+"_"+str(x_set[i+1])+"_"+str(ed)+"_coordinate.jpg",roi)
-    return split,wirte
-
-
-def get_transform(input_path, output_path):
-    # 读取原始图片
-    gray,image=cv_gray_path(input_path)
-    gray = cv_adaptiveThreshold(gray)
-    #高斯模糊
-    # gray = cv2.GaussianBlur(gray, (5, 5), 0)
-    # 执行轮廓检测
-    contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    # 筛选最大的封闭边框
-    max_contour = max(contours, key=cv2.contourArea)
-    # cv2.drawContours(src, [max_contour], -1, (0, 255, 0), thickness=2)
-    # 获取轮廓的外接矩形
-    x, y, w, h = cv2.boundingRect(max_contour)
-    # 提取四个角点
-    top_left = (x, y)
-    bottom_left = (w+x,y)
-    top_right = (x, h+y)
-    bottom_right = (x+w, h + y)
-    box = np.int0([top_left,top_right,bottom_left,bottom_right])
-    # 寻找最小面积矩形
-    # rect = cv2.minAreaRect(max_contour)
-    # box = np.int0(cv2.boxPoints(rect))
-    # cv2.drawContours(src, [box], -1, (255, 255, 0), thickness=2)
-    # 获取轮廓的坐标点
-    # 近似轮廓为四边形
-    epsilon = 0.02 * cv2.arcLength(max_contour, True)
-    approx = cv2.approxPolyDP(max_contour, epsilon, True)
-    #多次近似
-    approx = mush_approx(approx)
-    # 获取轮廓的四个端点坐标
-    points = approx.squeeze().tolist()
-    # 定义排序规则函数
-    def contour_sort_rule(point):
-        x, y = point
-        # 根据越上越左、越上越右、越下越左、越下越右的顺序进行排序
-        if x <= image.shape[0] // 2 and y <= image.shape[1] // 2:
-            return 1  # 越左越上
-        elif x > image.shape[0] // 2 and y <= image.shape[1] // 2:
-            return 2  # 越右越上
-        elif x <= image.shape[0] // 2 and y > image.shape[1] // 2:
-            return 3  # 越左越下
-        else:
-            return 4  # 越右越下
-    #无法近似四边形则停止变换，直接返回
-    if len(points)>4:
-        return False
-    # 根据排序规则对坐标点进行排序
-    sorted_points = sorted(points, key=contour_sort_rule)
-    sorted_box = sorted(box, key=contour_sort_rule)
-    # 打印排序后的坐标点
-    print("透视变换----")
-    x_set,y_set = get_x_y_set(sorted_points)
-    if len(set(x_set))==2 and len(set(y_set))==2:
-        return False
-    
-    # 组合角点
-    res = np.float32([sorted_points[0], sorted_points[1], sorted_points[2], sorted_points[3]])
-    img_size = (image.shape[1],image.shape[0])
-    dst = np.float32([sorted_box[0],sorted_box[1],sorted_box[2],sorted_box[3]])
-    # dst = np.float32([[0, 0], [5000 ,0], [0, 5000], [5000, 5000]])
-    # 获取透视变换矩阵，进行转换
-    M = cv2.getPerspectiveTransform(res, dst)
-    src = cv2.warpPerspective(image, M,img_size)
-    
-    if check_trf_success(src):
-        cv2.imwrite(output_path,src)
-        return True
-    return False
-
-
-def get_compress(input_path, output_path,target_max_size):
-    # 读取原始图片
-    image = cv2.imread(input_path)
-
-    # 获取原始图片的宽度和高度
-    width = image.shape[1]
-    height = image.shape[0]
-    
-    original_size = os.path.getsize(input_path)
-
-    # 如果原始图片已经小于等于目标大小，则直接保存原始图片
-    if original_size < target_max_size:
-        return False
-    
-    # 计算原始图片的大小
-    original_size = width * height
-    # 计算压缩比例
-    compression_ratio = (target_max_size*1.75 / original_size) ** 0.5
-    
-    if compression_ratio>=1:
-        return False
-
-    # 计算压缩后的宽度和高度
-    compressed_width = int(width * compression_ratio)
-    compressed_height = int(height * compression_ratio)
-
-    # 使用二三插值法进行压缩
-    compressed_image = cv2.resize(image, (compressed_width, compressed_height), interpolation=cv2.INTER_CUBIC)
-
-    # 保存压缩后的图片
-    cv2.imwrite(output_path, compressed_image)
-    
-    return True
-
-def expand_cv_img(src_path):
-    '''
-    扩展像素,ocr提高识别度
-    '''
-    file_dir =os.path.dirname(src_path)
-    filename = os.path.basename(src_path)
-    s=filename.split('.')[0]
-    fx = filename.split('.')[1]
-    # # 读取原始图像
-    # img = cv2.imread(src_path)
-    # # 获取原始图像的宽度和高度
-    # original_height, original_width = img.shape[:2]
-    # # 扩展后的边框大小
-    # border_size = 10
-    # # 计算扩展后的宽度和高度
-    # expanded_width = original_width + 2 * border_size
-    # expanded_height = original_height + 2 * border_size
-    # # 创建扩展后的图像
-    # expanded_img = cv2.resize(img, (expanded_width, expanded_height))
-    
-    # # 读取原始图像
-    # expansion_factor = 1.21
-    # original_image = cv2.imread(src_path)
-
-    # # 获取原始图像的宽度和高度
-    # original_height, original_width = original_image.shape[:2]
-
-    # # 计算扩展后的图像的目标宽度和高度
-    # target_width = int(original_width * expansion_factor)
-    # target_height = int(original_height * expansion_factor)
-
-    # # 计算水平和垂直的填充量
-    # horizontal_padding = int((target_width - original_width) / 2)
-    # vertical_padding = int((target_height - original_height) / 2)
-
-    # 创建一个新的扩展后大小的空白图像
-    # expanded_img = cv2.copyMakeBorder(original_image, vertical_padding, vertical_padding,
-    #                                     horizontal_padding, horizontal_padding, cv2.BORDER_CONSTANT,value=[255,255,255])
-    img = cv2.imread(src_path)
-    # height, width, channels = img.shape
-    # img=img[1:height-1,1:width-1]
-    top = 6  # 顶部边框大小
-    bottom = 14  # 底部边框大小
-    left = 10 # 左侧边框大小
-    right = 10  # 右侧边框大小
-    # 使用cv2.copyMakeBorder()函数扩展图像
-    expanded_img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=[255, 255, 255])
-    
-    tmp = file_dir+"\_tmp."+fx
-    cv2.imwrite(tmp,expanded_img)
-    return tmp
-
-def check_trf_success(gray):
-    #再次检测
-    #执行轮廓检测
-    gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)
-    gray = cv_adaptiveThreshold(gray)
-    # try:
-    contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    # except:
-    #     return False
-    # 筛选最大的封闭边框
-    max_contour = max(contours, key=cv2.contourArea)
-    epsilon = 0.02 * cv2.arcLength(max_contour, True)
-    approx = cv2.approxPolyDP(max_contour, epsilon, True)
-    #多次近似
-    approx = mush_approx(approx)
-    # 获取轮廓的四个端点坐标
-    points = approx.squeeze().tolist()
-    #无法近似四边形则停止变换，直接返回
-    if len(points)>4:
-        return False
-    print("透视变换check----")
-    x_set,y_set = get_x_y_set(points)
-    if len(set(x_set))!=2 and len(set(y_set))!=2:
-        return False
-    return True
-
-def mush_approx(approx):
-    #多次近似
-    if len(approx) > 4:
-    # 寻找最小面积的四边形
-        hull = cv2.convexHull(approx)
-        if len(hull) == 4:
-            approx = hull
-        else:
-            hull = cv2.convexHull(hull)
-            approx = hull
-    if len(approx) >4:
-        hull = cv2.convexHull(approx)
-        if len(hull) == 4:
-            approx = hull
-        else:
-            hull = cv2.convexHull(hull)
-            approx = hull
-    return approx
-            
-def get_x_y_set(points):
-    x_set=[]
-    y_set=[]
-    for point in points:
-        x, y = point
-        print(f"Point: ({x}, {y})")
-        temp_index=0
-        y1=y
-        for index in range(len(y_set)):
-            if abs(y1-y_set[index])<=CVConfig.pixel_fault_tolerance:
-                temp_index=index
-                y1=y_set[index]
-        if temp_index==0 :
-            y_set.append(y1)
-        temp_index=0
-        x1=x
-        for index in range(len(x_set)):
-            if abs(x1-x_set[index])<=CVConfig.pixel_fault_tolerance:
-                temp_index=index
-                x1=x_set[index]
-        if temp_index==0 :
-            x_set.append(x1)
-    return x_set,y_set
-
-def clear_border_lines(image,contours,save_line):
-    for i in contours:
-        cv2.drawContours(image, [i], 0, (255, 255, 255), 2)
-    cv2.imwrite(save_line,image)
-    gray,image = cv_gray_path(save_line)
-    return image
-
-
-def cv_draw_max_rect(src_path):
-    gray,image = cv_gray_path(src_path)
-    binary=cv_adaptiveThreshold(gray)
-    contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    max_contour = max(contours, key=cv2.contourArea)
-    rect = cv2.minAreaRect(max_contour)
-    box = np.int0(cv2.boxPoints(rect))
-    def contour_sort_rule(point):
-        x, y = point
-        # 根据越上越左、越上越右、越下越左、越下越右的顺序进行排序
-        if x <= image.shape[0] // 2 and y <= image.shape[1] // 2:
-            return 1  # 越左越上
-        elif x > image.shape[0] // 2 and y <= image.shape[1] // 2:
-            return 2  # 越右越上
-        elif x <= image.shape[0] // 2 and y > image.shape[1] // 2:
-            return 3  # 越左越下
-        else:
-            return 4  # 越右越下
-    # 根据排序规则对坐标点进行排序
-    box = sorted(box, key=contour_sort_rule)
-    y1,x1=box[0]
-    y2,x2=box[1]
-    y3,x3=box[2]
-    y4,x4=box[3]
-    image=cv2.line(image,(y1,x1+5),(y2+20,x2+5),(0,255,0),thickness=2)
-    image=cv2.line(image,(y1,x1+5),(y4,x1+100),(0,255,0),thickness=2)
-    # cv2.drawContours(image, [box], -1, (0, 255, 0), thickness=5)
-    cv2.imwrite(src_path,image)
-
-
-def cv_init_img(src_path,uuid,is_compress=True):
-    '''
-    初始化优化图片，使用压缩和透视变换
-    '''
-    save_compress=fiul.uuid_save_compress_img(uuid)
-    save_transform = fiul.uuid_save_transform_img(uuid)
-    target = src_path
-    #压缩图片
-    if is_compress:
-        flag_compress = get_compress(target,save_compress,CVConfig.cv_compress)
-        if flag_compress:
-            target = save_compress
-    #透视转化
-    flag_transform=get_transform(target,save_transform)
-    if flag_transform:
-        target = save_transform
-    return target
-
-
-
-def cv_sharpening(img):
-    res = img
-    img=cv2.imread(img)
-    kernel = np.array([[-1,-1,-1],[-1,9,-1],[-1,-1,-1]])
-    # 应用锐化内核
-    img = cv2.filter2D(img, -1, kernel)
-    cv2.imwrite(res,img)
-    return res
-
-
-def cv_init_video(video_path,frame_path):
-    frame_name = []
-    img_list = []
-    cap = cv2.VideoCapture(video_path)
-    fps = cap.get(cv2.CAP_PROP_FPS)  # 获取视频帧率
-    duration = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) / fps)  # 获取视频时长（秒）
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    if duration<1:
-        return img_list
-    for i in range(1,int(duration)+1):
-        frame_name.append(int(i*fps))
-    frame_list = []  # 存储帧的列表
-    frame_count = 0
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-        frame_count += 1
-        if frame_count in frame_name:
-            frame  = frame[height-height//6:, width//8:width-width//8,:]
-            frame_list.append(frame)
-    cap.release()
-    for i in range(0,len(frame_list)-1):
-        gray1 = cv2.cvtColor(frame_list[i], cv2.COLOR_BGR2GRAY)
-        _,gray1 = cv2.threshold(gray1, 215, 255, cv2.THRESH_BINARY)
-        gray2 = cv2.cvtColor(frame_list[i+1], cv2.COLOR_BGR2GRAY)
-        _,gray2 = cv2.threshold(gray2, 215, 255, cv2.THRESH_BINARY)
-        if cal_stderr(gray1,gray2)>1.5:
-            path = frame_path+"/"+str(i)+"_frame.jpg"
-            img_list.append(path)
-            cv2.imwrite(path,frame_list[i])
-    return img_list
-
-def cal_stderr(img, imgo=None):
-    if imgo is None:
-        return (img ** 2).sum() / img.size * 100
-    else:
-        return ((img - imgo) ** 2).sum() / img.size * 100
+    # 灰度 + 二值
+    gray, image = imut.cv_gray_path(target_path)
+    binary = imut.cv_adaptiveThreshold(gray)
+    # 提取横竖线并合成表格
+    dilatedcol, dilatedrow = cv_x_y(other, binary)
+    merge = cv_table(other, dilatedcol, dilatedrow)
+    # 求单元格并落盘
+    x_y_list = cv_core(merge)
+    cv_end_save(x_y_list, image, coord, main)
+    return coord, txt_result
