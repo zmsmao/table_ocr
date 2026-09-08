@@ -1,200 +1,249 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
-    <title>Image Upload and API Response Display</title>
-    <style>
-        #container {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-        }
-
-        #left {
-            width: 50%;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-        }
-
-        #right {
-            width: 50%;
-            padding: 20px;
-        }
-
-        #progressBar {
-            width: 100%;
-            height: 10px;
-            background-color: #f0f0f0;
-            border-radius: 5px;
-            overflow: hidden;
-        }
-
-        #progressBar span {
-            display: block;
-            height: 100%;
-            background-color: #4caf50;
-            border-radius: 5px;
-            width: 0;
-            transition: width 0.3s;
-        }
-
-        .loader {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #3498db;
-            border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        #buttonContainer {
-            display: flex;
-            align-items: center;
-        }
-
-        #imageInput {
-            margin-right: 10px;
-        }
-        
-        #loadingIndicator {
-            margin-top: 20px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-    </style>
+    <meta charset="UTF-8">
+    <title>统一视音频/图像处理接口测试平台</title>
+    <!-- 引入 Tailwind CSS 开源原子化样式库 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 FontAwesome 开源图标库 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
-<body>
-    <div id="container">
-        <div id="left">
-            <h4>Upload Image</h4>
-            <div id="buttonContainer">
-                <input type="file" id="imageInput" accept="image/*">
-                <button id="sendButton" disabled>Send</button>
+<body class="bg-gray-50 text-gray-800 font-sans antialiased h-screen flex flex-col overflow-hidden">
+
+    <!-- 顶部导航栏 -->
+    <header class="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between shadow-sm">
+        <div class="flex items-center space-x-3">
+            <div class="bg-blue-600 text-white p-2 rounded-lg shadow">
+                <i class="fa-solid fa-brain text-lg"></i>
             </div>
-            <img id="previewImage" src="#" alt="Preview" style="max-width: 700px; max-height: 700px; display: none;">
+            <h1 class="text-xl font-bold text-gray-900">AI 视音频与图像处理统一测试平台</h1>
         </div>
-
-        <div id="right">
-            <h4 align="center">API Response</h4>
-            <div id="prompt" style="color: red;"></div>
-            <pre id="response" style="max-height: 550px; overflow-y: scroll;"></pre>
-            <!-- <pre id="response"></pre>-->  
-            <div id="loadingIndicator" style="display: none;">
-                <div class="loader"></div>
-            </div>
-            <p id="elapsedTime"></p>
+        <div class="text-sm text-gray-500 flex items-center space-x-2">
+            <span class="inline-block w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></span>
+            <span>服务状态：正常</span>
         </div>
-    </div>
+    </header>
 
-    <script>
-        const imageInput = document.getElementById('imageInput');
-        const previewImage = document.getElementById('previewImage');
-        const sendButton = document.getElementById('sendButton');
-        const progressBar = document.querySelector('#progressBar span');
-        const loadingIndicator = document.getElementById('loadingIndicator');
-
-        imageInput.addEventListener('change', function() {
-            const file = imageInput.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    previewImage.src = e.target.result;
-                    previewImage.style.display = 'block';
-                    sendButton.disabled = false;
-                }
-                reader.readAsDataURL(file);
-            }
-        });
+    <!-- 主体容器 -->
+    <main class="flex-1 flex overflow-hidden p-6 gap-6">
         
-        sendButton.addEventListener('click', function() {
-            const base64Data = previewImage.src.split(',')[1];
-            const imageName = imageInput.files[0].name;
-            const tmp = imageName.split('.')[0];
-            const imageSuffix = '.' + imageName.split('.').pop();
-            const data = {
-                'image': base64Data,
-                'name': tmp,
-                'suffix': imageSuffix,
+        <!-- 左侧：输入与预览区 -->
+        <section class="w-1/2 bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col p-6 overflow-hidden">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                <i class="fa-solid fa-cloud-arrow-up text-blue-600"></i> 媒体文件上传与控制
+            </h2>
+            
+            <!-- 控制面板：接口选择与文件上传 -->
+            <div class="flex flex-col gap-4 mb-6">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">选择后端处理接口</label>
+                    <select id="apiEndpoint" class="w-full bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5">
+                        <option value="/process/common">通用整图识别 (/process/common)</option>
+                        <option value="/process/res">工作票结构化提取 (/process/res)</option>
+                        <option value="/process/all">全量处理 (/process/all)</option>
+                        <option value="/process/vidImg">音视频/图像混合处理 (/process/vidImg)</option>
+                    </select>
+                </div>
+
+                <div class="flex items-center gap-4">
+                    <input type="file" id="fileInput" accept="image/*, video/*" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer">
+                    <button id="sendButton" disabled class="px-6 py-2.5 bg-blue-600 text-white font-medium text-sm rounded-lg shadow hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-300 disabled:cursor-not-allowed transition-all flex items-center gap-2">
+                        <i class="fa-solid fa-paper-plane"></i> 发送请求
+                    </button>
+                </div>
+            </div>
+
+            <!-- 动态预览区 -->
+            <div class="flex-1 border-2 border-dashed border-gray-200 rounded-xl flex items-center justify-center p-4 bg-gray-50 overflow-hidden relative">
+                <div id="previewContainer" class="w-full h-full flex items-center justify-center">
+                    <div class="text-center text-gray-400">
+                        <i class="fa-regular fa-image text-4xl mb-2"></i>
+                        <p class="text-sm">请选择图像或视频文件以预览</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 右侧：API 响应与调试区 -->
+        <section class="w-1/2 bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col p-6 overflow-hidden">
+            <h2 class="text-lg font-semibold text-gray-800 mb-2 flex items-center gap-2">
+                <i class="fa-solid fa-code text-blue-600"></i> API 响应结果
+            </h2>
+            
+            <!-- 提示信息 -->
+            <div id="prompt" class="text-xs text-amber-600 bg-amber-50 border border-amber-200 p-2.5 rounded-lg mb-3 min-h-[36px] flex items-center"></div>
+            
+            <!-- 响应数据展示框 -->
+            <div class="flex-1 bg-gray-900 rounded-xl p-4 overflow-y-auto shadow-inner mb-4 relative">
+                <pre id="response" class="text-gray-200 text-sm font-mono whitespace-pre-wrap">等待发送请求...</pre>
+            </div>
+            
+            <!-- 底部状态栏 -->
+            <div class="flex items-center justify-between text-sm text-gray-500 pt-2 border-t border-gray-100">
+                <div id="loadingIndicator" class="hidden items-center gap-2 text-blue-600 font-medium">
+                    <i class="fa-solid fa-spinner animate-spin"></i> 处理中...
+                </div>
+                <div id="statusPlaceholder" class="flex items-center gap-2">
+                    <i class="fa-regular fa-clock"></i> 准备就绪
+                </div>
+                <div id="elapsedTime" class="font-mono text-gray-600 font-medium"></div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 业务逻辑脚本 -->
+    <script>
+        const API_BASE_URL = "http://localhost:8111";
+        
+        const dom = {
+            fileInput: document.getElementById('fileInput'),
+            apiEndpoint: document.getElementById('apiEndpoint'),
+            previewContainer: document.getElementById('previewContainer'),
+            sendButton: document.getElementById('sendButton'),
+            response: document.getElementById('response'),
+            prompt: document.getElementById('prompt'),
+            loadingIndicator: document.getElementById('loadingIndicator'),
+            statusPlaceholder: document.getElementById('statusPlaceholder'),
+            elapsedTime: document.getElementById('elapsedTime')
+        };
+
+        let currentFileDataURL = null;
+        let currentFile = null;
+
+        // 文件选择与现代预览逻辑
+        dom.fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) {
+                resetPreview();
+                return;
+            }
+
+            currentFile = file;
+            const reader = new FileReader();
+            
+            reader.onload = function(event) {
+                currentFileDataURL = event.target.result;
+                const fileType = file.type;
+                dom.previewContainer.innerHTML = '';
+
+                if (fileType.startsWith('image/')) {
+                    const img = document.createElement('img');
+                    img.src = currentFileDataURL;
+                    img.className = "max-h-full max-w-full object-contain rounded-lg shadow";
+                    dom.previewContainer.appendChild(img);
+                    dom.sendButton.disabled = false;
+                } else if (fileType.startsWith('video/')) {
+                    const video = document.createElement('video');
+                    video.src = currentFileDataURL;
+                    video.controls = true;
+                    video.className = "max-h-full max-w-full rounded-lg shadow";
+                    dom.previewContainer.appendChild(video);
+                    dom.sendButton.disabled = false;
+                } else {
+                    dom.previewContainer.innerHTML = `
+                        <div class="text-center text-red-500">
+                            <i class="fa-solid fa-triangle-exclamation text-3xl mb-2"></i>
+                            <p class="text-sm">不支持的文件格式</p>
+                        </div>`;
+                    dom.sendButton.disabled = true;
+                }
             };
+            
+            reader.readAsDataURL(file);
+        });
 
-            const requestOptions = {
-                method: 'POST',
-                headers: new Headers({
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*'
-                }),
-                body: JSON.stringify(data),
-                dataType: "json",
-                cache: 'no-cache'
-            };
+        // 核心请求分发
+        dom.sendButton.addEventListener('click', async function() {
+            if (!currentFile || !currentFileDataURL) return;
 
+            const endpoint = dom.apiEndpoint.value;
+            const isJsonPayload = ['/process/common', '/process/res', '/process/all'].includes(endpoint);
 
-            // 禁用相关元素
-            sendButton.disabled = true;
-            imageInput.disabled = true;
+            if (isJsonPayload && !currentFile.type.startsWith('image/')) {
+                alert("当前选择的接口仅支持图像文件。");
+                return;
+            }
 
-            // 显示加载指示器
-            loadingIndicator.style.display = 'block';
-
-            // 开始计时
+            toggleUIState(true);
             const startTime = Date.now();
 
-            // 发送请求前清空API响应数据
-            const responseElement = document.getElementById('response');
-            const responseElementTime = document.getElementById("elapsedTime");
-            const responsePrompt = document.getElementById("prompt");
-            responseElement.textContent = "";
-            responseElementTime.textContent = "";
-            responsePrompt.textContent = "";
+            try {
+                let requestOptions = { method: 'POST', cache: 'no-cache' };
 
-            // 发送请求
-            fetch("http://localhost:8111/process/all", requestOptions)
-            .then(response => response.json())
-            .then(json => {
-                // 在右侧显示接口返回的JSON格式数据（格式化）
-                const responseElement = document.getElementById('response');
-                responseElement.textContent = JSON.stringify(json, null, 4);
+                if (isJsonPayload) {
+                    const base64Data = currentFileDataURL.split(',')[1];
+                    const imageName = currentFile.name;
+                    const namePart = imageName.substring(0, imageName.lastIndexOf('.'));
+                    const suffixPart = imageName.substring(imageName.lastIndexOf('.'));
 
-                // 结束计时并计算用时
-                const endTime = Date.now();
-                const elapsedTime = endTime - startTime;
+                    requestOptions.headers = { 'Content-Type': 'application/json' };
+                    requestOptions.body = JSON.stringify({
+                        'image': base64Data,
+                        'name': namePart || imageName,
+                        'suffix': suffixPart
+                    });
+                } else {
+                    const formData = new FormData();
+                    formData.append('file', currentFile);
+                    requestOptions.body = formData;
+                }
 
-                // 将毫秒转换为时分秒
-                const hours = Math.floor(elapsedTime / (1000 * 60 * 60));
-                const minutes = Math.floor((elapsedTime % (1000 * 60 * 60)) / (1000 * 60));
-                const seconds = Math.floor((elapsedTime % (1000 * 60)) / 1000);
+                const response = await fetch(`${API_BASE_URL}${endpoint}`, requestOptions);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP 状态异常: ${response.status}`);
+                }
+                
+                const jsonResult = await response.json();
+                
+                dom.response.textContent = JSON.stringify(jsonResult, null, 4);
+                dom.prompt.textContent = "提示：任何模型识别率不可能达到100%，请确保图源或视频清晰以保障识别质量。";
 
-                // 显示用时时间
-                const elapsedTimeElement = document.getElementById('elapsedTime');
-                elapsedTimeElement.textContent = `Elapsed Time: ${hours}h ${minutes}m ${seconds}s`;
-
-                //显示提示
-                const responsePrompt = document.getElementById("prompt");
-                responsePrompt.textContent = "任何模型识别率不可能达到100%的效果，肯定会有损失文本和错误文本的情况。图片要清晰，保证图源质量。";
-
-            })
-            .catch(error => {
-                console.error('Error:', error);
-            })
-            .finally(() => {
-                // 隐藏加载指示器
-                loadingIndicator.style.display = 'none';
-
-                // 启用相关元素
-                sendButton.disabled = false;
-                imageInput.disabled = false;
-            });
+            } catch (error) {
+                console.error('Request Error:', error);
+                dom.response.textContent = `请求失败:\n${error.message}\n请检查后端服务是否正常及跨域策略 (CORS)。`;
+            } finally {
+                const elapsedTime = Date.now() - startTime;
+                updateElapsedTime(elapsedTime);
+                toggleUIState(false);
+            }
         });
+
+        function toggleUIState(isProcessing) {
+            dom.sendButton.disabled = isProcessing;
+            dom.fileInput.disabled = isProcessing;
+            dom.apiEndpoint.disabled = isProcessing;
+            
+            if (isProcessing) {
+                dom.loadingIndicator.classList.remove('hidden');
+                dom.loadingIndicator.classList.add('flex');
+                dom.statusPlaceholder.classList.add('hidden');
+                dom.response.textContent = "正在调用 AI 接口处理中...";
+                dom.elapsedTime.textContent = "";
+                dom.prompt.textContent = "";
+            } else {
+                dom.loadingIndicator.classList.add('hidden');
+                dom.loadingIndicator.classList.remove('flex');
+                dom.statusPlaceholder.classList.remove('hidden');
+            }
+        }
+
+        function updateElapsedTime(ms) {
+            const seconds = (ms / 1000).toFixed(2);
+            dom.elapsedTime.textContent = `耗时: ${seconds} 秒`;
+        }
+
+        function resetPreview() {
+            currentFile = null;
+            currentFileDataURL = null;
+            dom.previewContainer.innerHTML = `
+                <div class="text-center text-gray-400">
+                    <i class="fa-regular fa-image text-4xl mb-2"></i>
+                    <p class="text-sm">请选择图像或视频文件以预览</p>
+                </div>`;
+            dom.sendButton.disabled = true;
+        }
     </script>
 </body>
 </html>
