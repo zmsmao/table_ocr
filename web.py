@@ -1,223 +1,196 @@
-from flask import Flask,request,render_template
-from config.web_config import WebConfig
-from config.file_config import FileConfig
-from service.base_service import common,res,all,com_video_img
-from utils.http_util import success_response,error_response
-import utils.file_util as fiul
-import utils.common_util as comm
-from datetime import timedelta
-import utils.pool_util as pout
-from logs.log_handle import getLogHandler
+'''
+表格 / 工作票识别服务
+
+启动：python -u web.py
+测试页：http://localhost:8111/index      （/process/all）
+        http://localhost:8111/vidImg    （/process/vidImg）
+'''
 import datetime
-import json
+import os
+import traceback
+from datetime import timedelta
 from multiprocessing import Pool
 from threading import Lock
 
+from flask import Flask, request, render_template
+
+from config.file_config import FileConfig
+from config.web_config import WebConfig
+from service.base_service import com_video_img, common, res, init_worker_engine
+from service.base_service import all as ocr_all
+from utils import file_util as fiul
+from utils.common_util import generate_unique_id, get_file_type
+from utils.http_util import error_response, success_response
+from utils.pool_util import pool as new_thread_pool
 
 
 app = Flask(__name__)
-app.config['JSON_AS_ASCII'] = False
-app.config['LOGGER_HANDLER_POLICY'] = 'always'
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = timedelta(hours=1)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
-# app.config['FLASK_DEBUG'] = False
-# 添加日志配置
-app.logger.addHandler(getLogHandler())
-# 激活上下文
-ctx = app.app_context()
-ctx.push()
 
-@app.route('/index',methods=['GET'])
-def html():
+
+# 同时最多并行执行的识别任务数，超出的任务在进程池里排队
+MAX_PARALLEL_TASKS = 5
+
+# 仅用于请求结束后异步删除图片目录
+executor = new_thread_pool()
+
+# 识别任务进程池（懒加载）
+# Windows 下子进程会重新导入本模块，因此不能在导入阶段创建 Pool
+_ocr_pool = None
+_ocr_pool_lock = Lock()
+
+
+# 修改后：
+def get_ocr_pool():
+    '''
+    懒加载进程池。
+    PaddleOCR 单次推理占用内存较大，放到子进程里跑，任务结束后内存可完整归还系统。
+    '''
+    global _ocr_pool
+    with _ocr_pool_lock:
+        if _ocr_pool is None:
+            # 加入 initializer 使得每个子进程在创建时自动预热模型
+            _ocr_pool = Pool(MAX_PARALLEL_TASKS, initializer=init_worker_engine)
+        return _ocr_pool
+
+
+def run_task(func, *args):
+    '''
+    提交一个识别任务并阻塞等待结果。超出并行上限时自动排队，不会无限 fork。
+    '''
+    return get_ocr_pool().apply_async(func, args).get()
+
+
+def cleanup(uuid):
+    '''
+    请求结束后按需清理本次 uuid 产生的图片目录。
+    '''
+    if not FileConfig.is_delete_file:
+        return
+    executor.submit(fiul.dir_delete, fiul.uuid_save_root(uuid))
+    executor.submit(fiul.dir_delete, fiul.uuid_cache_root(uuid))
+
+
+def build_log(name, uuid, error=None):
+    '''
+    拼接请求日志，保持原有字段顺序。
+    '''
+    msg = (f'Time: {datetime.datetime.now()}\nMethod: {request.method}'
+           f'\nURL: {request.url}\nImage: {name}\nUuidPath: io/save_path/{uuid}')
+    if error is None:
+        return f'Request Success\n{msg}'
+    return f'Request Error\n{msg}\nException: {error}'
+
+
+def handle_request(uuid, name, func, *args):
+    '''
+    统一的「执行任务 + 记日志 + 清理目录」，四个接口共用。
+    '''
+    try:
+        results = run_task(func, *args)
+        app.logger.info(build_log(name, uuid))
+        return success_response(results)
+    except Exception as e:
+        error_stack = traceback.format_exc()
+        app.logger.error(build_log(name, uuid, error_stack))
+        return error_response(error_stack)
+    finally:
+        cleanup(uuid)
+
+
+def parse_image_request():
+    '''
+    解析 json 入参并校验后缀合法性，避免拼出越界路径。
+    返回 (data, 图片文件名)；校验失败抛 ValueError。
+    '''
+    data = request.get_json(silent=True)
+    if not data or 'image' not in data:
+        raise ValueError('请求体必须为 json，且包含 image 字段（图片 base64）')
+    name = str(data.get('name') or '')
+    suffix = str(data.get('suffix') or '')
+    if not suffix.startswith('.') or '..' in suffix or '/' in suffix or '\\' in suffix:
+        raise ValueError('suffix 非法，应为 .jpg / .png 这样的图片后缀')
+    return data, name + suffix
+
+
+def get_upload_file_type(filename):
+    '''
+    判断上传文件类型：1 图片，2 视频，0 不支持。文件名无扩展名时按不支持处理。
+    '''
+    try:
+        return get_file_type(filename)
+    except (IndexError, AttributeError):
+        return 0
+
+
+@app.route('/index', methods=['GET'])
+def index():
     return render_template('index.html')
 
-@app.route('/vidImg',methods=['GET'])
+
+@app.route('/vidImg', methods=['GET'])
 def upload():
     return render_template('vidImg.html')
 
-@app.route("/process/vidImg",methods=['POST'])
+
+@app.route('/process/vidImg', methods=['POST'])
 def video_and_img():
-    try:
-        # 检查是否有文件被上传
-        if 'file' not in request.files:
-            log_message = f'Request Error\nTime: {datetime.datetime.now()}\nMethod: {request.method}\nURL: {request.url}\nException: {"没有选择文件"}'
-            app.logger.error(log_message)
-            return error_response("没有选择文件")
-        file = request.files['file']
-        # 检查文件名是否为空
-        if file.filename == '':
-            log_message = f'Request Error\nTime: {datetime.datetime.now()}\nMethod: {request.method}\nURL: {request.url}\nException: {"文件名不能为空"}'
-            app.logger.error(log_message)
-            return error_response("文件名不能为空")
-        # 检查文件类型
-        file_type =comm.get_file_type(file.filename)
-        if file_type == 0:
-            log_message = f'Request Error\nTime: {datetime.datetime.now()}\nMethod: {request.method}\nURL: {request.url}\nException: {"不支持的文件类型,仅支持图片和视频"}'
-            app.logger.error(log_message)
-            return error_response("不支持的文件类型,仅支持图片和视频")
-        uuid=comm.generate_unique_id()
-        di = fiul.uuid_save_web_file(file,uuid)
-        flag_pool = False
-        if counter[0] <sitePro:
-            counter[0] += 1
-            flag_pool = True
-            pool = Pool(1)
-            result = pool.apply_async(com_video_img, (file_type,uuid,di))
-            # 获取任务的返回结果
-            results = result.get()
-        else:
-            results = com_video_img(file_type,uuid,di)
-        return success_response(results)
-    except Exception as e:
-        app.logger.error(str(e))
-        return error_response(str(e))
-    finally:
-        if flag_pool:
-            counter[0] -= 1
-            pool.close()
-        if FileConfig.is_delete_file:
-            root=fiul.uuid_save_root(uuid)
-            fiul.dir_delete(root)
-
-# counter = 0
-# counter_lock = Lock()
-
-# @app.teardown_request
-# def decrement_counter(exception=None):
-#     global counter
-#     counter_lock.acquire()
-#     counter -= 1
-#     counter_lock.release()
-
-# @app.before_request
-# def decrement_counter():
-#     global counter
-#     counter_lock.acquire()
-#     counter += 1
-#     counter_lock.release()
+    '''图片 / 视频通用识别，form-data 上传文件'''
+    if 'file' not in request.files:
+        return error_response('没有选择文件')
+    file = request.files['file']
+    if not file.filename:
+        return error_response('文件名不能为空')
+    file_type = get_upload_file_type(file.filename)
+    if file_type == 0:
+        return error_response('不支持的文件类型,仅支持图片和视频')
+    uuid = generate_unique_id()
+    # 先落盘，之后子进程才能按路径识别
+    di = fiul.uuid_save_web_file(file, uuid)
+    return handle_request(uuid, file.filename, com_video_img, file_type, uuid, di)
 
 
 @app.route('/process/common', methods=['POST'])
 def process_common():
-    data=request.json
-    uuid=comm.generate_unique_id()
+    '''只做整图文字识别'''
     try:
-        #服务类
-        # # 创建一个进程池对象
-        # # 提交任务到进程池
-        flag_pool = False
-        if counter[0] <sitePro:
-            counter[0] += 1
-            flag_pool = True
-            pool = Pool(1)
-            result = pool.apply_async(common, (data,uuid))
-            # 获取任务的返回结果
-            results = result.get()
-        else:
-            results=common(data=data,uuid=uuid)
-        name = data['name']+data['suffix']
-        save_path = 'io/save_path/'+uuid
-        log_message = f'Request Success\nTime: {datetime.datetime.now()}\nMethod: {request.method}\nURL: {request.url}\nImage: {name}\nUuidPath: {save_path}'
-        app.logger.info(log_message)
-        return success_response(results)
-    except Exception as e:
-        print(e)
-        log_message = f'Request Error\nTime: {datetime.datetime.now()}\nMethod: {request.method}\nURL: {request.url}\nException: {str(e)}'
-        app.logger.error(log_message)
-        return error_response(str(e))
-    finally:
-        if flag_pool:
-            counter[0] -= 1
-            pool.close()
-        if FileConfig.is_delete_file:
-            root=fiul.uuid_save_root(uuid)
-            cache=fiul.uuid_cache_root(uuid)
-            executor.submit( fiul.dir_delete(root))
-            executor.submit( fiul.dir_delete(cache))
+        data, image_name = parse_image_request()
+    except ValueError as e:
+        error_stack = traceback.format_exc()
+        app.logger.error(f"Request Error (/process/common):\n{error_stack}")
+        return error_response(error_stack)
+    uuid = generate_unique_id()
+    return handle_request(uuid, image_name, common, data, uuid)
+
 
 @app.route('/process/res', methods=['POST'])
 def process_res():
-    data=request.json
-    uuid=comm.generate_unique_id()
+    '''工作票结构化提取'''
     try:
-        flag_pool = False
-        #服务类
-        if counter[0] <sitePro:
-            flag_pool = True
-            counter[0] += 1
-            pool = Pool(1)
-            result = pool.apply_async(res, (data,uuid,None))
-            # 获取任务的返回结果
-            results = result.get()
-        else:
-            results=res(data=data,uuid=uuid,executor=executor)
-        name = data['name']+data['suffix']
-        save_path = 'io/save_path/'+uuid
-        log_message = f'Request Success\nTime: {datetime.datetime.now()}\nMethod: {request.method}\nURL: {request.url}\nImage: {name}\nUuidPath: {save_path}'
-        app.logger.info(log_message)
-        return success_response(results)
-    except Exception as e:
-        print(e)
-        log_message = f'Request Error\nTime: {datetime.datetime.now()}\nMethod: {request.method}\nURL: {request.url}\nException: {str(e)}'
-        app.logger.error(log_message)
-        return error_response(str(e))
-    finally:
-        if flag_pool:
-            counter[0] -= 1
-            pool.close()
-        if FileConfig.is_delete_file:
-            root=fiul.uuid_save_root(uuid)
-            cache=fiul.uuid_cache_root(uuid)
-            executor.submit( fiul.dir_delete(root))
-            executor.submit( fiul.dir_delete(cache))
+        data, image_name = parse_image_request()
+    except ValueError as e:
+        error_stack = traceback.format_exc()
+        app.logger.error(f"Request Error (/process/res):\n{error_stack}")
+        return error_response(error_stack)
+    uuid = generate_unique_id()
+    return handle_request(uuid, image_name, res, data, uuid, None)
+
 
 @app.route('/process/all', methods=['POST'])
 def process_all():
-    data=request.json
-    uuid=comm.generate_unique_id()
+    '''表格分割 + 逐格单独识别'''
     try:
-        #服务类
-        flag_pool = False
-        #服务类
-        if counter[0] <sitePro:
-            flag_pool = True
-            counter[0] += 1
-            pool = Pool(1)
-            result = pool.apply_async(all, (data,uuid,None))
-            # 获取任务的返回结果
-            results = result.get()
-        else:
-            results=all(data=data,uuid=uuid,executor=executor)
-        name = data['name']+data['suffix']
-        save_path = 'io/save_path/'+uuid
-        log_message = f'Request Success\nTime: {datetime.datetime.now()}\nMethod: {request.method}\nURL: {request.url}\nImage: {name}\nUuidPath: {save_path}'
-        app.logger.info(log_message)
-        return success_response(results)
-    except Exception as e:
-        print(e)
-        log_message = f'Request Error\nTime: {datetime.datetime.now()}\nMethod: {request.method}\nURL: {request.url}\nException: {str(e)}'
-        app.logger.error(log_message)
-        return error_response(str(e))
-    finally:
-        if flag_pool:
-            counter[0] -= 1
-            pool.close()
-        if FileConfig.is_delete_file:
-            root=fiul.uuid_save_root(uuid)
-            cache=fiul.uuid_cache_root(uuid)
-            executor.submit( fiul.dir_delete(root))
-            executor.submit( fiul.dir_delete(cache))
+        data, image_name = parse_image_request()
+    except ValueError as e:
+        error_stack = traceback.format_exc()
+        app.logger.error(f"Request Error (/process/all):\n{error_stack}")
+        return error_response(error_stack)
+    uuid = generate_unique_id()
+    return handle_request(uuid, image_name, ocr_all, data, uuid, None)
 
-# 注册UserController路由
+
 if __name__ == '__main__':
-    #开启服务
-    executor=pout.pool()
-    #进程计数
-    counter = [0]
-    sitePro = 5
-    app.run(host='0.0.0.0', port=WebConfig.port, debug=True, threaded=True, processes=1)
-    '''
-    app.run()中可以接受两个参数，分别是threaded和processes，用于开启线程支持和进程支持。
-    1.threaded : 多线程支持，默认为False，即不开启多线程;
-    2.processes：进程数量，默认为1.
-    '''
+    # 对外提供服务时建议关掉调试器：TABLE_OCR_DEBUG=0
+    debug = os.getenv('TABLE_OCR_DEBUG', '1') == '1'
+    app.run(host='0.0.0.0', port=WebConfig.port, debug=debug, threaded=True)

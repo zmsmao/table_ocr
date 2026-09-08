@@ -1,0 +1,6 @@
+# 运行时产物，不入库
+io/save_path/
+__pycache__/
+*.pyc
+.env
+.vscode/
