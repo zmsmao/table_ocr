@@ -1,124 +1,37 @@
+from dataclasses import dataclass, asdict
+from typing import Any, Dict, Optional
+
+@dataclass
 class OCRCommon:
-    def __init__(self, name=None, coordinates=None, txt_result=None,txt_rate=None,uuid=None):
-        self._name = name
-        self._coordinates = coordinates
-        self._txt_result = txt_result
-        self._txt_rate=txt_rate
-        self._uuid = uuid
+    """
+    通用 OCR 识别结果基础实体类。
+    使用 @dataclass 自动生成 __init__ 和基础属性绑定，替代原有的冗长 getter/setter。
+    """
+    name: Optional[str] = None         # 图像或任务名称
+    coordinates: Optional[Any] = None  # 文本框坐标信息，通常格式为 [ [x1,y1], [x2,y2], ... ]
+    txt_result: Optional[str] = None   # 识别出的具体文本内容
+    txt_rate: Optional[float] = None   # 文本识别置信度/准确率
+    uuid: Optional[str] = None         # 任务唯一标识符
 
-    # 原始名称属性的set/get方法
-    @property
-    def name(self):
-        return self._name
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        将对象序列化为字典格式。
+        注：原代码重写了 __dict__() 方法，这在 Python 中会引发内置属性冲突，
+        此处统一重构为标准的 to_dict() 实例方法。
+        """
+        return asdict(self)
 
-    @name.setter
-    def name(self, value):
-        self._name = value
-
-    # bbox属性的set/get方法
-    @property
-    def coordinates(self):
-        return self._coordinates
-
-    @coordinates.setter
-    def coordinates(self, value):
-        self._coordinates = value
-
-    # txt_result属性的set/get方法
-    @property
-    def txt_result(self):
-        return self._txt_result
-
-    @txt_result.setter
-    def txt_result(self, value):
-        self._txt_result = value
-        
-    
-    # txt_rate属性的set/get方法
-    @property
-    def txt_rate(self):
-        return self.txt_rate
-
-    @txt_rate.setter
-    def txt_result(self, value):
-        self._txt_rate = value
-    
-    # uuid属性的set/get方法
-    @property
-    def uuid(self):
-        return self.uuid
-
-    @uuid.setter
-    def txt_result(self, value):
-        self._uuid = value
-        
-        
-    def __dict__(self):
-        return {
-            "coordinates": self._coordinates,
-            "txt_result": self._txt_result,
-            "name": self._name,
-            "txt_rate": self._txt_rate,
-            "uuid":self._uuid
-        }
-
+@dataclass
 class OCRAll:
-    def __init__(self, name=None, bbox=None, result=None,suffix=None,bbox_path=None):
-        self._name = name
-        self._bbox = bbox
-        self._result = result
-        self._suffix=suffix
-        self._bbox_path = bbox_path
-        
-    def __dict__(self):
-        return {
-            "bbox": self._bbox,
-            "result": self._result,
-            "name": self._name,
-            "suffix": self._suffix,
-            "bbox_path":self._bbox_path
-        }
-    
-    # 原始名称属性的set/get方法
-    @property
-    def name(self):
-        return self._name
+    """
+    全量表格/图像切片 OCR 识别结果实体类。
+    """
+    name: Optional[str] = None         # 图像或任务名称
+    bbox: Optional[Any] = None         # 切片的全局边界框坐标
+    result: Optional[Any] = None       # 该切片内的具体 OCR 识别结果（通常包含多个 OCRCommon 对象）
+    suffix: Optional[str] = None       # 图像文件后缀名
+    bbox_path: Optional[str] = None    # 对应切片图像的物理存储路径
 
-    @name.setter
-    def name(self, value):
-        self._name = value
-
-    # bbox属性的set/get方法
-    @property
-    def bbox(self):
-        return self._bbox
-
-    @bbox.setter
-    def bbox(self, value):
-        self._bbox = value
-
-    # txt_result属性的set/get方法
-    @property
-    def result(self):
-        return self._result
-
-    @result.setter
-    def txt_result(self, value):
-        self._result = value
-        
-    @property
-    def suffix(self):
-        return self._suffix
-
-    @suffix.setter
-    def suffix(self, value):
-        self._suffix = value
-        
-    
-    @property
-    def bbox_path(self):
-        return self._suffix
-
-    @bbox_path.setter
-    def bbox_path(self, value):
-        self._bbox_path = value
+    def to_dict(self) -> Dict[str, Any]:
+        """将全量识别结果对象序列化为字典格式"""
+        return asdict(self)

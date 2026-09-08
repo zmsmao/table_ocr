@@ -11,7 +11,7 @@ from rules import line_rules
 from rules import record_rules
 
 from config.file_config import FileConfig
-import utils.speck_util as spul
+import utils.geometry_util as geut
 from domain.ocr_result_common import OCRCommon
 import cv2
 
@@ -70,7 +70,7 @@ def adapter_key(ans:OCRCommon,target_path,root_dir,is_check=True):
         for i in range(check_index,len(ans)):
             index_.append(ans[i]['coordinates'])
     #左，右，上，下
-    rectangle = spul.expand_coordinates(spul.calculate_bounding_box(index_),width,height,45,150,30,80)
+    rectangle = geut.expand_coordinates(geut.calculate_bounding_box(index_),width,height,45,150,30,80)
     x1, y1 = map(int, rectangle[0])
     x2, y2 = map(int, rectangle[1])
     roi = image[y1:y2, x1:x2]
