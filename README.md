@@ -1,7 +1,7 @@
-# Table OCR · 表格与工作票识别服务
+# Table OCR · 表格与工作票结构化识别服务 (Table & Ticket OCR Service)
 
-基于 **Flask + PaddleOCR + OpenCV** 的表格 / 工作票结构化识别服务。
-一张照片进去，经过矫正、切格、逐格 OCR、规则匹配，出来的是可直接落库的结构化 JSON。
+基于 **Flask + PaddleOCR + OpenCV** 的表格与工作票结构化识别服务。
+支持倾斜矫正、形态学切格、逐格 OCR 识别及规则匹配，出来的是可直接落库的结构化 JSON。
 
 ![Python](https://img.shields.io/badge/Python-3.9.23-3776AB?logo=python&logoColor=white)
 ![PaddleOCR](https://img.shields.io/badge/PaddleOCR-2.7.3-00B4D8)
@@ -14,16 +14,16 @@
 
 ---
 
-## 能力一览
+## 核心特性：表格切分、OCR识别与结构化提取 (Key Features)
 
-| 能力 | 说明 |
+| 能力 (Capability) | 说明 (Description) |
 | --- | --- |
-| 通用文字识别 | 整图 OCR，返回文本框坐标、识别文本与置信度 |
-| 表格切分 | 形态学提取横竖表格线，定位单元格并逐格切图 |
-| 逐格识别 | 每个格子单独放大 + 锐化后识别，避免整图识别的串行错乱 |
-| 工作票结构化 | 按票种规则抽取表头与正文字段，输出结构化 JSON |
-| 图片 / 视频通用 | 图片直接识别；视频自动抽帧后逐帧识别并去重 |
-| 倾斜矫正 | 霍夫直线检测整体倾角并反向旋转，拍歪的表格也能正常切格 |
+| 通用文字识别 (General OCR) | 整图 OCR，返回文本框坐标、识别文本与置信度 |
+| 表格切分 (Table Extraction) | 形态学提取横竖表格线，定位单元格并逐格切图 |
+| 逐格识别 (Cell-by-cell OCR) | 每个格子单独放大 + 锐化后识别，避免整图识别的串行错乱 |
+| 工作票结构化 (Structured Parsing)| 按票种规则抽取表头与正文字段，输出结构化 JSON |
+| 图片/视频通用 (Image/Video OCR) | 图片直接识别；视频自动抽帧后逐帧识别并去重 |
+| 倾斜矫正 (Skew Correction) | 霍夫直线检测整体倾角并反向旋转，拍歪的表格也能正常切格 |
 
 处理链路：
 
