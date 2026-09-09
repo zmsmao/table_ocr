@@ -7,9 +7,9 @@ class CVConfig:
     
     cvY='/cvY.jpg'
     
-    cv_table='/cv_table.jpg'
+    cv_table='cv_table.jpg'
     
-    cv_point='/cv_point.jpg'
+    cv_point='cv_point.jpg'
     
     cv_x_right_split=100
     

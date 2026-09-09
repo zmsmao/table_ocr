@@ -7,12 +7,14 @@
 '''
 import datetime
 import os
+import sys
 import traceback
 from datetime import timedelta
 from multiprocessing import Pool
 from threading import Lock
 
 from flask import Flask, request, render_template
+from loguru import logger
 
 from config.file_config import FileConfig
 from config.web_config import WebConfig
@@ -28,6 +30,11 @@ app = Flask(__name__)
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = timedelta(hours=1)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
+# ----------------- Loguru 配置 -----------------
+# 移除默认的 handler，仅添加控制台输出
+logger.remove()
+logger.add(sys.stdout, format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>")
+# -----------------------------------------------
 
 # 同时最多并行执行的识别任务数，超出的任务在进程池里排队
 MAX_PARALLEL_TASKS = 5
@@ -88,15 +95,17 @@ def handle_request(uuid, name, func, *args):
     统一的「执行任务 + 记日志 + 清理目录」，四个接口共用。
     '''
     try:
+        logger.info(f"接收到新请求, 开始处理任务: UUID={uuid}, Name={name}")
         results = run_task(func, *args)
-        app.logger.info(build_log(name, uuid))
+        logger.info(build_log(name, uuid))
         return success_response(results)
     except Exception as e:
         error_stack = traceback.format_exc()
-        app.logger.error(build_log(name, uuid, error_stack))
+        logger.error(build_log(name, uuid, error_stack))
         return error_response(error_stack)
-    finally:
-        cleanup(uuid)
+    # finally:
+        # cleanup(uuid)
+    #     logger.info(f"清理任务完成: UUID={uuid}")
 
 
 def parse_image_request():
@@ -111,6 +120,7 @@ def parse_image_request():
     suffix = str(data.get('suffix') or '')
     if not suffix.startswith('.') or '..' in suffix or '/' in suffix or '\\' in suffix:
         raise ValueError('suffix 非法，应为 .jpg / .png 这样的图片后缀')
+    logger.debug(f"成功解析图片请求: 原始文件名={name}, 后缀={suffix}")
     return data, name + suffix
 
 
@@ -126,11 +136,13 @@ def get_upload_file_type(filename):
 
 @app.route('/index', methods=['GET'])
 def index():
+    logger.info("访问 index 页面")
     return render_template('index.html')
 
 
 @app.route('/vidImg', methods=['GET'])
 def upload():
+    logger.info("访问 vidImg 页面")
     return render_template('vidImg.html')
 
 
@@ -138,15 +150,19 @@ def upload():
 def video_and_img():
     '''图片 / 视频通用识别，form-data 上传文件'''
     if 'file' not in request.files:
+        logger.warning("请求缺少 file 字段")
         return error_response('没有选择文件')
     file = request.files['file']
     if not file.filename:
+        logger.warning("上传文件名为空")
         return error_response('文件名不能为空')
     file_type = get_upload_file_type(file.filename)
     if file_type == 0:
+        logger.warning(f"不支持的文件类型: {file.filename}")
         return error_response('不支持的文件类型,仅支持图片和视频')
     uuid = generate_unique_id()
     # 先落盘，之后子进程才能按路径识别
+    logger.info(f"文件落盘开始: UUID={uuid}, FileName={file.filename}")
     di = fiul.uuid_save_web_file(file, uuid)
     return handle_request(uuid, file.filename, com_video_img, file_type, uuid, di)
 
@@ -158,7 +174,7 @@ def process_common():
         data, image_name = parse_image_request()
     except ValueError as e:
         error_stack = traceback.format_exc()
-        app.logger.error(f"Request Error (/process/common):\n{error_stack}")
+        logger.error(f"Request Error (/process/common):\n{error_stack}")
         return error_response(error_stack)
     uuid = generate_unique_id()
     return handle_request(uuid, image_name, common, data, uuid)
@@ -171,7 +187,7 @@ def process_res():
         data, image_name = parse_image_request()
     except ValueError as e:
         error_stack = traceback.format_exc()
-        app.logger.error(f"Request Error (/process/res):\n{error_stack}")
+        logger.error(f"Request Error (/process/res):\n{error_stack}")
         return error_response(error_stack)
     uuid = generate_unique_id()
     return handle_request(uuid, image_name, res, data, uuid, None)
@@ -184,7 +200,7 @@ def process_all():
         data, image_name = parse_image_request()
     except ValueError as e:
         error_stack = traceback.format_exc()
-        app.logger.error(f"Request Error (/process/all):\n{error_stack}")
+        logger.error(f"Request Error (/process/all):\n{error_stack}")
         return error_response(error_stack)
     uuid = generate_unique_id()
     return handle_request(uuid, image_name, ocr_all, data, uuid, None)
@@ -193,4 +209,5 @@ def process_all():
 if __name__ == '__main__':
     # 对外提供服务时建议关掉调试器：TABLE_OCR_DEBUG=0
     debug = os.getenv('TABLE_OCR_DEBUG', '1') == '1'
+    logger.info(f"启动 Web 服务: port={WebConfig.port}, debug={debug}")
     app.run(host='0.0.0.0', port=WebConfig.port, debug=debug, threaded=True)

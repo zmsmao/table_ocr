@@ -36,7 +36,7 @@ class FileConfig:
     
     cv_border_lines_img = 'lines_cv.jpg'
     
-    cv_accept_name = ' accept_cv'
+    cv_accept_name = 'accept_cv'
     
     cv_draw_max_rect = 'draw_cv.jpg'
 
